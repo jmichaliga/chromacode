@@ -68,7 +68,7 @@ function loadColorFromStorage(): void {
 function setupEventListeners(): void {
   // Color picker button
   if (colorPickerBtn) {
-    colorPickerBtn.addEventListener('click', popupStartColorPicker);
+    colorPickerBtn.addEventListener('click', startColorPickerWithUserGesture);
   }
   
   // Clear history button
@@ -91,33 +91,97 @@ function setupEventListeners(): void {
 }
 
 /**
- * Start the color picker
+ * Start the color picker with direct user gesture
+ * This approach ensures the user activation is preserved
  */
-function popupStartColorPicker(): void {
-  // Get the active tab ID
+function startColorPickerWithUserGesture(): void {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0];
-    
-    if (!tab || !tab.id) {
-      console.error('ChromaCode: No active tab found');
+    if (!tabs[0]?.id) {
+      showToast('Error: Cannot access active tab', 3000);
       return;
     }
     
-    // Send message to the background script to start the picker
-    chrome.runtime.sendMessage({
-      action: 'startColorPicker',
-      tabId: tab.id
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error('ChromaCode: Error starting color picker:', chrome.runtime.lastError);
-      } else if (!response || !response.success) {
-        console.error('ChromaCode: Failed to start color picker:', response?.error || 'Unknown error');
-      } else {
-        console.log('ChromaCode: Color picker started');
-        // Close the popup
-        window.close();
-      }
+    const tabId = tabs[0].id;
+    
+    // Execute script directly in the content page to preserve user activation
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: executeEyeDropperInPage
+    })
+    .then(() => {
+      // Close the popup after starting the eyedropper
+      window.close();
+    })
+    .catch(error => {
+      console.error('ChromaCode: Error executing script in page:', error);
+      
+      // Fall back to the original method if scripting fails
+      fallbackStartColorPicker(tabId);
     });
+  });
+}
+
+/**
+ * This function will be injected and executed directly in the page context
+ * to ensure it has the user activation status
+ */
+function executeEyeDropperInPage() {
+  if (!window.EyeDropper) {
+    chrome.runtime.sendMessage({
+      action: 'colorPickError',
+      error: 'EyeDropper API not supported in this browser'
+    });
+    return;
+  }
+  
+  try {
+    const eyeDropper = new window.EyeDropper();
+    eyeDropper.open()
+      .then(result => {
+        if (result.sRGBHex) {
+          chrome.runtime.sendMessage({
+            action: 'colorPicked',
+            color: result.sRGBHex
+          });
+        }
+      })
+      .catch(e => {
+        // Don't report cancellation as an error
+        if (e.name !== 'AbortError') {
+          chrome.runtime.sendMessage({
+            action: 'colorPickError',
+            error: e.message || 'Unknown error'
+          });
+        }
+      });
+  } catch (err: any) {
+    chrome.runtime.sendMessage({
+      action: 'colorPickError',
+      error: err.message || 'Unknown error'
+    });
+  }
+}
+
+/**
+ * Fallback to original method if direct scripting fails
+ */
+function fallbackStartColorPicker(tabId: number): void {
+  // Send message to the background script to start the picker
+  chrome.runtime.sendMessage({
+    action: 'startColorPicker',
+    tabId: tabId
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('ChromaCode: Error starting color picker:', chrome.runtime.lastError);
+      showToast(`Error: ${chrome.runtime.lastError.message}`, 3000);
+    } else if (!response || !response.success) {
+      console.error('ChromaCode: Failed to start color picker:', response?.error || 'Unknown error');
+      showToast(`Error: ${response?.error || 'Failed to start color picker'}`, 3000);
+    } else {
+      console.log('ChromaCode: Color picker started');
+      // Close the popup
+      window.close();
+    }
   });
 }
 

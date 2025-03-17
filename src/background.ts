@@ -24,9 +24,9 @@ chrome.runtime.onMessage.addListener(
           // Add to the beginning of history
           colorHistory.unshift(color);
           
-          // Limit history to 10 items
-          if (colorHistory.length > 10) {
-            colorHistory = colorHistory.slice(0, 10);
+          // Limit history to the max number defined in popup.ts
+          if (colorHistory.length > 20) {
+            colorHistory = colorHistory.slice(0, 20);
           }
           
           // Save both lastPickedColor and updated colorHistory
@@ -38,10 +38,18 @@ chrome.runtime.onMessage.addListener(
             console.log('ChromaCode: History updated:', colorHistory);
             
             // Try to open the popup if it's not already open
-            chrome.action.openPopup()
-              .catch(error => {
-                console.log('ChromaCode: Could not open popup, popup might already be open');
-              });
+            // Use a timeout to avoid race conditions
+            setTimeout(() => {
+              try {
+                chrome.action.openPopup()
+                  .catch(error => {
+                    console.log('ChromaCode: Could not open popup automatically, it might already be open');
+                  });
+              } catch (popupError) {
+                // Some browsers might throw instead of returning a rejected promise
+                console.log('ChromaCode: Error opening popup:', popupError);
+              }
+            }, 150);
               
             sendResponse({ success: true });
           });
@@ -51,6 +59,26 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
       }
       return true; // Indicates async response
+    }
+    
+    // Handle color pick error
+    if (message.action === 'colorPickError') {
+      console.error('ChromaCode: Color pick error:', message.error);
+      
+      // Show error in popup if possible
+      try {
+        setTimeout(() => {
+          chrome.action.openPopup()
+            .catch(() => {
+              console.log('ChromaCode: Could not open popup to show error');
+            });
+        }, 150);
+      } catch (error) {
+        console.error('ChromaCode: Error opening popup to show error:', error);
+      }
+      
+      sendResponse({ success: false });
+      return true;
     }
     
     // Handle request to start color picker from popup
@@ -178,7 +206,7 @@ function injectContentScript(tab: chrome.tabs.Tab): void {
                   }
                 }
               );
-            }, 100);
+            }, 350); // Increased delay to allow for proper initialization
           }
         );
       } else {

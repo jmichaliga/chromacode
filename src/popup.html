@@ -1,331 +1,321 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ChromaCode</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-        
-        :root {
-            --primary-color: #00FFFF;
-            --secondary-color: #FF00FF;
-            --bg-color: #0a0c14;
-            --bg-light: #1a1c24;
-            --grid-color: rgba(0, 255, 255, 0.1);
-            --text-color: #FFFFFF;
-        }
-        
-        body {
-            width: 300px;
-            padding: 15px;
-            font-family: 'Share Tech Mono', 'Courier New', monospace;
-            margin: 0;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            background-image: 
-                linear-gradient(var(--grid-color) 1px, transparent 1px),
-                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
-            background-size: 20px 20px;
-            letter-spacing: 0.5px;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3) inset;
-            border: 1px solid var(--primary-color);
-        }
-        
-        /* Scanline effect */
-        body::after {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0, 0, 0, 0.1),
-                rgba(0, 0, 0, 0.1) 1px,
-                transparent 1px,
-                transparent 2px
-            );
-            pointer-events: none;
-            z-index: 10;
-        }
-        
-        h1 {
-            font-size: 18px;
-            margin-top: 0;
-            color: var(--primary-color);
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            position: relative;
-            text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
-            padding-bottom: 5px;
-            margin-bottom: 15px;
-            border-bottom: 1px solid var(--primary-color);
-        }
-        
-        h1::after {
-            content: "_";
-            position: absolute;
-            opacity: 1;
-            animation: blink 1s infinite;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0; }
-        }
-        
-        #currentColor {
-            width: 100%;
-            height: 100px;
-            margin-bottom: 15px;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
-            border: 1px solid var(--primary-color);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        #currentColor::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0, 0, 0, 0.05),
-                rgba(0, 0, 0, 0.05) 1px,
-                transparent 1px,
-                transparent 2px
-            );
-            pointer-events: none;
-        }
-        
-        /* Corner accents */
-        #currentColor::after {
-            content: "";
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 10px;
-            height: 10px;
-            border-top: 2px solid var(--secondary-color);
-            border-right: 2px solid var(--secondary-color);
-        }
-        
-        .color-value {
-            display: flex;
-            margin-bottom: 10px;
-            position: relative;
-        }
-        
-        .color-value label {
-            width: 50px;
-            font-weight: bold;
-            color: var(--secondary-color);
-            text-transform: uppercase;
-            display: flex;
-            align-items: center;
-        }
-        
-        .color-value input {
-            flex: 1;
-            padding: 5px 8px;
-            border: 1px solid var(--primary-color);
-            background-color: rgba(0, 255, 255, 0.05);
-            cursor: pointer;
-            color: var(--text-color);
-            font-family: 'Share Tech Mono', 'Courier New', monospace;
-            letter-spacing: 1px;
-            position: relative;
-            transition: all 0.2s;
-        }
-        
-        .color-value input:hover {
-            background-color: rgba(0, 255, 255, 0.1);
-            box-shadow: 0 0 5px rgba(0, 255, 255, 0.3);
-        }
-        
-        .color-value input:focus {
-            outline: none;
-            box-shadow: 0 0 5px var(--primary-color);
-        }
-        
-        #colorPickerBtn {
-            display: block;
-            width: 100%;
-            padding: 10px;
-            background-color: transparent;
-            color: var(--primary-color);
-            border: 1px solid var(--primary-color);
-            margin: 15px 0;
-            cursor: pointer;
-            font-size: 14px;
-            font-family: 'Share Tech Mono', 'Courier New', monospace;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.2s;
-        }
-        
-        #colorPickerBtn:hover {
-            background-color: rgba(0, 255, 255, 0.1);
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
-        }
-        
-        #colorPickerBtn::before {
-            content: "";
-            position: absolute;
-            top: -2px;
-            left: -2px;
-            right: -2px;
-            bottom: -2px;
-            background-color: var(--primary-color);
-            z-index: -1;
-            clip-path: polygon(0 0, 100% 0, 100% 100%, 95% 100%, 95% 90%, 85% 90%, 85% 100%, 8% 100%, 0 70%);
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        
-        #colorPickerBtn:hover::before {
-            opacity: 0.1;
-        }
-        
-        #colorPickerBtn::after {
-            content: "▶";
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 10px;
-            color: var(--secondary-color);
-        }
-        
-        .history-section {
-            margin-top: 20px;
-            border-top: 1px solid rgba(0, 255, 255, 0.3);
-            padding-top: 10px;
-        }
-        
-        .history-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        
-        .history-header h2 {
-            font-size: 14px;
-            margin: 0;
-            color: var(--primary-color);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        
-        #clearHistoryBtn {
-            font-size: 12px;
-            background: none;
-            border: none;
-            color: var(--secondary-color);
-            cursor: pointer;
-            font-family: 'Share Tech Mono', 'Courier New', monospace;
-            display: none;
-            text-transform: uppercase;
-            opacity: 0.7;
-            transition: opacity 0.2s;
-        }
-        
-        #clearHistoryBtn:hover {
-            opacity: 1;
-            text-shadow: 0 0 5px var(--secondary-color);
-        }
-        
-        #colorHistory {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 30px;
-            justify-content: flex-start;
-            width: 100%;
-        }
-        
-        .color-item {
-            width: 22px;
-            height: 22px;
-            cursor: pointer;
-            border: 1px solid var(--primary-color);
-            transition: all 0.2s;
-            position: relative;
-            flex: 0 0 auto;
-            margin-bottom: 6px;
-        }
-        
-        .color-item:hover {
-            transform: scale(1.1);
-            box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
-            z-index: 1;
-        }
-        
-        .color-item::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0, 0, 0, 0.1),
-                rgba(0, 0, 0, 0.1) 1px,
-                transparent 1px,
-                transparent 2px
-            );
-            pointer-events: none;
-        }
-        
-        #toast {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: var(--bg-light);
-            color: var(--primary-color);
-            padding: 8px 16px;
-            font-size: 14px;
-            z-index: 1000;
-            opacity: 0;
-            transition: opacity 0.3s;
-            border: 1px solid var(--primary-color);
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
-        }
-        
-        .copy-hint {
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.5);
-            margin-top: 5px;
-            text-align: center;
-            font-style: italic;
-        }
-        
-        /* Tailwind color field styling */
-        #tailwindValue {
-            font-weight: bold;
-            text-align: center;
-            transition: transform 0.2s;
-            font-family: 'Share Tech Mono', 'Courier New', monospace;
-            background-color: rgba(255, 0, 255, 0.05);
-        }
-        
-        #tailwindValue:hover {
-            transform: scale(1.02);
-            background-color: rgba(255, 0, 255, 0.1);
-            box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
-        }
+      @import url("https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap");
 
-    #credits {
+      :root {
+        --primary-color: #00ffff;
+        --secondary-color: #ff00ff;
+        --bg-color: #0a0c14;
+        --bg-light: #1a1c24;
+        --grid-color: rgba(0, 255, 255, 0.1);
+        --text-color: #ffffff;
+      }
+
+      body {
+        width: 300px;
+        padding: 15px;
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        margin: 0;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        background-image: linear-gradient(
+            var(--grid-color) 1px,
+            transparent 1px
+          ),
+          linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+        background-size: 20px 20px;
+        letter-spacing: 0.5px;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3) inset;
+        border: 1px solid var(--primary-color);
+      }
+
+      /* Scanline effect - keep for body only */
+      body::after {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: repeating-linear-gradient(
+          0deg,
+          rgba(0, 0, 0, 0.1),
+          rgba(0, 0, 0, 0.1) 1px,
+          transparent 1px,
+          transparent 2px
+        );
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin-top: 0;
+        color: var(--primary-color);
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        position: relative;
+        text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+        padding-bottom: 5px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--primary-color);
+      }
+
+      h1::after {
+        content: "_";
+        position: absolute;
+        opacity: 1;
+        animation: blink 1s infinite;
+      }
+
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+
+      #currentColor {
+        width: 100%;
+        height: 96px;
+        margin-bottom: 16px;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
+        border: 1px solid var(--primary-color);
+        position: relative;
+        overflow: hidden;
+        /* Make this appear above the body scanlines */
+        z-index: 20;
+      }
+
+      /* Removed scanline effect for currentColor */
+      /* Corner accents - keep these */
+      #currentColor::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 8px;
+        height: 8px;
+        border-top: 2px solid var(--secondary-color);
+        border-right: 2px solid var(--secondary-color);
+      }
+
+      .color-value {
+        display: flex;
+        margin-bottom: 8px;
+        position: relative;
+      }
+
+      .color-value label {
+        width: 48px;
+        font-weight: bold;
+        color: var(--secondary-color);
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+      }
+
+      .color-value input {
+        flex: 1;
+        padding: 4px 8px;
+        border: 1px solid var(--primary-color);
+        background-color: rgba(0, 255, 255, 0.05);
+        cursor: pointer;
+        color: var(--text-color);
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        letter-spacing: 1px;
+        position: relative;
+        transition: all 0.2s;
+      }
+
+      .color-value input:hover {
+        background-color: rgba(0, 255, 255, 0.1);
+        box-shadow: 0 0 5px rgba(0, 255, 255, 0.3);
+      }
+
+      .color-value input:focus {
+        outline: none;
+        box-shadow: 0 0 5px var(--primary-color);
+      }
+
+      #colorPickerBtn {
+        display: block;
+        width: 100%;
+        padding: 8px;
+        background-color: transparent;
+        color: var(--primary-color);
+        border: 1px solid var(--primary-color);
+        margin: 16px 0;
+        cursor: pointer;
+        font-size: 14px;
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.2s;
+      }
+
+      #colorPickerBtn:hover {
+        background-color: rgba(0, 255, 255, 0.1);
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
+      }
+
+      #colorPickerBtn::before {
+        content: "";
+        position: absolute;
+        top: -2px;
+        left: -2px;
+        right: -2px;
+        bottom: -2px;
+        background-color: var(--primary-color);
+        z-index: -1;
+        clip-path: polygon(
+          0 0,
+          100% 0,
+          100% 100%,
+          95% 100%,
+          95% 90%,
+          85% 90%,
+          85% 100%,
+          8% 100%,
+          0 70%
+        );
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+
+      #colorPickerBtn:hover::before {
+        opacity: 0.1;
+      }
+
+      #colorPickerBtn::after {
+        content: "▶";
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 10px;
+        color: var(--secondary-color);
+      }
+
+      .history-section {
+        margin-top: 16px;
+        border-top: 1px solid rgba(0, 255, 255, 0.3);
+        padding-top: 8px;
+      }
+
+      .history-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .history-header h2 {
+        font-size: 14px;
+        margin: 0;
+        color: var(--primary-color);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      #clearHistoryBtn {
+        font-size: 12px;
+        background: none;
+        border: none;
+        color: var(--secondary-color);
+        cursor: pointer;
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        display: none;
+        text-transform: uppercase;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+      }
+
+      #clearHistoryBtn:hover {
+        opacity: 1;
+        text-shadow: 0 0 5px var(--secondary-color);
+      }
+
+      #colorHistory {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+        justify-content: flex-start;
+        width: 100%;
+      }
+
+      .color-item {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+        border: 1px solid var(--primary-color);
+        transition: all 0.2s;
+        position: relative;
+        flex: 0 0 auto;
+        margin-bottom: 4px;
+        /* Make colors appear above the body scanlines */
+        z-index: 20;
+      }
+
+      /* Removed scanline effect for color swatches */
+
+      .color-item:hover {
+        transform: scale(1.1);
+        box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+        z-index: 21;
+      }
+
+      #toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: var(--bg-light);
+        color: var(--primary-color);
+        padding: 8px 16px;
+        font-size: 14px;
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s;
+        border: 1px solid var(--primary-color);
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+      }
+
+      .copy-hint {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+        margin-top: 5px;
+        text-align: center;
+        font-style: italic;
+      }
+
+      /* Tailwind color field styling */
+      #tailwindValue {
+        font-weight: bold;
+        text-align: center;
+        transition: transform 0.2s;
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        background-color: rgba(255, 0, 255, 0.05);
+      }
+
+      #tailwindValue:hover {
+        transform: scale(1.02);
+        background-color: rgba(255, 0, 255, 0.1);
+        box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
+      }
+
+      #credits {
         font-size: 10px;
         color: var(--secondary-color);
         position: relative;
@@ -333,28 +323,31 @@
         left: auto;
         text-align: right;
         text-decoration: none;
-    }
+      }
 
-    #credits a {
+      #credits a {
         color: var(--primary-color);
-        text-decoration: underline;
-    }
-    
-    #credits a:hover {
-        color: var(--secondary-color);
-        border-bottom: 1px solid var(--secondary-color);
+        text-decoration: none;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+      }
+
+      #credits a:hover {
+        border-bottom: 1px solid var(--primary-color);
         text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
-    }
-    
-    #colorPickerBtn.disabled {
+        opacity: 1;
+        text-shadow: 0 0 5px var(--secondary-color);
+      }
+
+      #colorPickerBtn.disabled {
         background-color: rgba(150, 150, 150, 0.2);
         color: rgba(0, 255, 255, 0.3);
         cursor: not-allowed;
         border-color: rgba(0, 255, 255, 0.2);
         position: relative;
-    }
-    
-    #colorPickerBtn.disabled::after {
+      }
+
+      #colorPickerBtn.disabled::after {
         content: "✕";
         color: rgba(255, 0, 0, 0.5);
         position: absolute;
@@ -362,45 +355,52 @@
         top: 50%;
         transform: translateY(-50%);
         font-size: 12px;
-    }
-    
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <h1>ChromaCode</h1>
-    
+
     <div id="currentColor"></div>
-    
+
     <div class="color-value">
-        <label for="hexValue">HEX:</label>
-        <input type="text" id="hexValue" readonly title="Click to copy">
+      <label for="hexValue">HEX:</label>
+      <input type="text" id="hexValue" readonly title="Click to copy" />
     </div>
-    
+
     <div class="color-value">
-        <label for="rgbValue">RGB:</label>
-        <input type="text" id="rgbValue" readonly title="Click to copy">
+      <label for="rgbValue">RGB:</label>
+      <input type="text" id="rgbValue" readonly title="Click to copy" />
     </div>
-    
+
     <div class="color-value">
-        <label for="tailwindValue">TW:</label>
-        <input type="text" id="tailwindValue" readonly title="Click to copy Tailwind color class">
+      <label for="tailwindValue">TW:</label>
+      <input
+        type="text"
+        id="tailwindValue"
+        readonly
+        title="Click to copy Tailwind color class"
+      />
     </div>
-    
+
     <p class="copy-hint">// click to copy value</p>
-    
+
     <button id="colorPickerBtn">Pick Color</button>
-    
+
     <div class="history-section">
-        <div class="history-header">
-            <h2>Recent Colors</h2>
-            <button id="clearHistoryBtn">Clear</button>
-        </div>
-        <div id="colorHistory"></div>
-        <p id="credits">Created by <a href="https://smartnode.co" target="_blank">SmartNode</a></p>
+      <div class="history-header">
+        <h2>Recent Colors</h2>
+        <button id="clearHistoryBtn">Clear</button>
+      </div>
+      <div id="colorHistory"></div>
+      <p id="credits">
+        Created by <a href="https://smartnode.co" target="_blank">SmartNode</a>
+      </p>
     </div>
-    
+
     <div id="toast"></div>
-    
+
     <script src="popup.js" type="module"></script>
-</body>
-</html> 
+  </body>
+</html>
+
