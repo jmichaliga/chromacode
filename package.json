@@ -1,0 +1,22 @@
+{
+  "name": "chroma-code",
+  "version": "1.0.0",
+  "description": "A Chrome extension for picking colors from web pages",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "watch": "tsc --watch",
+    "copy-assets": "cp -r src/icons dist/ && cp src/manifest.json dist/ && cp src/popup.html dist/ && cp src/styles.css dist/",
+    "dev": "npm run build && npm run watch"
+  },
+  "keywords": [
+    "chrome-extension",
+    "color-picker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/chrome": "^0.0.237",
+    "typescript": "^5.1.6"
+  }
+}
