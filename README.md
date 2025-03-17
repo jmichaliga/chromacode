@@ -9,6 +9,15 @@ A Chrome extension for picking colors from any webpage, built with TypeScript.
 - 📋 Copy colors in HEX and RGB formats
 - 📚 Color history for quick access to previously picked colors
 - 🌐 Works across websites and with images (when possible)
+- 🚀 Uses native EyeDropper API in modern browsers for improved performance
+
+### EyeDropper API Support
+
+ChromaCode now uses the [EyeDropper API](https://developer.mozilla.org/en-US/docs/Web/API/EyeDropper) when available, which provides a native color picker experience:
+
+- ✅ Chrome/Edge: Version 95+ (full support)
+
+For browsers without EyeDropper API support, ChromaCode automatically falls back to its custom color picker implementation.
 
 ## Development Setup
 

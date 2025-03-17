@@ -7,9 +7,10 @@ declare namespace ChromaCode {
    * Message types that can be sent between extension components
    */
   interface Message {
-    action: 'pickColor' | 'colorPicked' | 'startColorPicker';
+    action: 'pickColor' | 'colorPicked' | 'startColorPicker' | 'colorPickError';
     color?: string;
     tabId?: number;
+    error?: string;
   }
 
   /**
@@ -50,4 +51,29 @@ declare namespace ChromaCode {
     x: number;
     y: number;
   }
+}
+
+/**
+ * EyeDropper API definitions
+ * These make TypeScript aware of the EyeDropper API available in modern browsers
+ */
+interface EyeDropperResult {
+  sRGBHex: string;
+}
+
+interface EyeDropperOptions {
+  signal?: AbortSignal;
+}
+
+interface EyeDropperInterface {
+  open(options?: EyeDropperOptions): Promise<EyeDropperResult>;
+}
+
+interface EyeDropperConstructor {
+  new(): EyeDropperInterface;
+}
+
+// Add EyeDropper to the Window interface
+interface Window {
+  EyeDropper?: EyeDropperConstructor;
 } 

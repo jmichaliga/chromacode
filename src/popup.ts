@@ -17,6 +17,11 @@ const toast = document.getElementById('toast') as HTMLDivElement | null;
 let colorHistoryArray: string[] = [];
 const MAX_HISTORY_ITEMS = 10;
 
+// Check if the EyeDropper API is available
+const isEyeDropperSupported = (): boolean => {
+  return typeof window !== 'undefined' && 'EyeDropper' in window;
+};
+
 // Initialize the popup
 document.addEventListener('DOMContentLoaded', () => {
   console.log('ChromaCode: Popup loaded');
@@ -26,6 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Set up event listeners
   setupEventListeners();
+  
+  // Show a message if the browser doesn't support the EyeDropper API
+  if (!isEyeDropperSupported()) {
+    showToast('Using legacy color picker - consider updating your browser for a better experience');
+  }
 });
 
 /**
@@ -618,15 +628,31 @@ function findClosestTailwindColor(hexColor: string): { name: string, hex: string
  */
 function calculateColorDistance(rgb1: { r: number, g: number, b: number }, rgb2: { r: number, g: number, b: number }): number {
   // Human eye is more sensitive to green, then red, then blue
-  const rWeight = 0.3;
+  // Standard weights based on human perception
+  const rWeight = 0.30;
   const gWeight = 0.59;
   const bWeight = 0.11;
   
+  // Calculate differences
   const rDiff = Math.pow(rgb1.r - rgb2.r, 2) * rWeight;
   const gDiff = Math.pow(rgb1.g - rgb2.g, 2) * gWeight;
   const bDiff = Math.pow(rgb1.b - rgb2.b, 2) * bWeight;
   
-  return Math.sqrt(rDiff + gDiff + bDiff);
+  // Additional weighting to make darker colors match more accurately
+  // This helps with the issue of darker colors appearing lighter
+  let darkColorAdjustment = 1.0;
+  
+  // Calculate average brightness of the input color
+  const inputBrightness = (rgb1.r + rgb1.g + rgb1.b) / 3;
+  
+  // Adjust weight for darker colors - give more importance to darker color matching
+  if (inputBrightness < 128) {
+    // For darker colors, make differences more significant
+    // This makes the matching more sensitive for darker colors
+    darkColorAdjustment = 1.5 - (inputBrightness / 255);
+  }
+  
+  return Math.sqrt(rDiff + gDiff + bDiff) * darkColorAdjustment;
 }
 
 /**

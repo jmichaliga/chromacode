@@ -1,16 +1,24 @@
-// Variables to track picking state
-let isPickerActive: boolean = false;
-let pickerOverlay: HTMLDivElement | null = null;
-let pickerCursor: HTMLDivElement | null = null;
-let colorInfoBox: HTMLDivElement | null = null;
-let magnifierGlass: HTMLDivElement | null = null;
+// Global variables for our picker
+let pickerOverlay: HTMLElement | null = null;
+let pickerCursor: HTMLElement | null = null;
+let colorInfoBox: HTMLElement | null = null;
+let magnifierGlass: HTMLElement | null = null;
 let magnifierCanvas: HTMLCanvasElement | null = null;
+let magnifierContext: CanvasRenderingContext2D | null = null;
+let currentCenterPixelColor: string = '#ffffff';
+let pickerActive = false;
+const MAGNIFIER_SIZE = 150; // Size of the magnification area
 let lastProcessedPosition: ChromaCode.Position = { x: 0, y: 0 };
 let throttleDelay: number = 30; // ms - controls how often we process mouse movements
 let lastUpdateTime: number = 0;
 const ZOOM_FACTOR: number = 6; // Magnification level
-const MAGNIFIER_SIZE: number = 120; // Size of the magnifier in pixels
 const MAGNIFIER_PIXEL_SIZE: number = 6; // Size of each "pixel" in the magnifier
+let standaloneInfoBox: HTMLElement | null = null; // New standalone color info box
+
+// Check if the EyeDropper API is available
+const hasEyeDropperAPI = (): boolean => {
+  return typeof window !== 'undefined' && 'EyeDropper' in window;
+};
 
 // Indicate that the content script is loaded and ready
 console.log('ChromaCode: Content script loaded');
@@ -38,8 +46,22 @@ chrome.runtime.onMessage.addListener((
     try {
       // Make sure stylesheet is injected before starting the picker
       injectStylesheet();
-      contentPickerStart();
-      sendResponse({ success: true });
+      
+      if (hasEyeDropperAPI()) {
+        // Use the native EyeDropper API if available
+        startNativeEyeDropper()
+          .then(() => sendResponse({ success: true }))
+          .catch(error => {
+            console.error('ChromaCode: Error using native EyeDropper:', error);
+            // Fall back to custom implementation if the native one fails
+            contentPickerStart();
+            sendResponse({ success: true });
+          });
+      } else {
+        // Fall back to our custom implementation
+        contentPickerStart();
+        sendResponse({ success: true });
+      }
     } catch (error) {
       console.error('ChromaCode: Error starting color picker:', error);
       sendResponse({ 
@@ -53,17 +75,234 @@ chrome.runtime.onMessage.addListener((
   }
 });
 
-// Start the color picker
+// Use the native EyeDropper API
+async function startNativeEyeDropper(): Promise<void> {
+  if (!hasEyeDropperAPI()) {
+    throw new Error('EyeDropper API not supported');
+  }
+  
+  try {
+    console.log('ChromaCode: Using native EyeDropper API');
+    
+    // Create a preview/helper element that will show while moving the cursor
+    createStandaloneInfoBox();
+    
+    // Setup event listeners for live preview before starting EyeDropper
+    setupLivePreviewListeners(true);
+    
+    // Create a new EyeDropper instance
+    const eyeDropper = new (window.EyeDropper as EyeDropperConstructor)();
+    
+    // Open the eyedropper - this will show the native UI
+    const result = await eyeDropper.open();
+    
+    // Clean up our preview once the EyeDropper returns a result
+    removeStandaloneInfoBox();
+    
+    // Get the selected color
+    const selectedColor = result.sRGBHex;
+    console.log('ChromaCode: Color picked with native EyeDropper:', selectedColor);
+    
+    // Send the selected color to the background script
+    chrome.runtime.sendMessage({
+      action: 'colorPicked',
+      color: selectedColor
+    }, response => {
+      if (chrome.runtime.lastError) {
+        console.error('ChromaCode: Error sending color to background:', chrome.runtime.lastError);
+      } else {
+        console.log('ChromaCode: Background response:', response);
+      }
+    });
+  } catch (error) {
+    // Clean up our preview elements
+    removeStandaloneInfoBox();
+    
+    // The user likely canceled the eyedropper or it failed
+    console.error('ChromaCode: Native EyeDropper error:', error);
+    
+    // Forward the error
+    throw error;
+  }
+}
+
+// Setup live preview event listeners
+function setupLivePreviewListeners(isNative: boolean): void {
+  document.addEventListener('mousemove', handlePreviewMouseMove);
+  
+  // Also stop preview when eye dropper is active or on key press
+  if (isNative) {
+    document.addEventListener('keydown', removeStandaloneInfoBox);
+    document.addEventListener('mousedown', removeStandaloneInfoBox);
+  }
+}
+
+// Handle mouse movement for the standalone preview
+function handlePreviewMouseMove(e: MouseEvent): void {
+  if (!standaloneInfoBox) return;
+  
+  // Get mouse position
+  const mouseX = e.clientX;
+  const mouseY = e.clientY;
+  
+  // Throttle updates for better performance
+  const now = Date.now();
+  if (now - lastUpdateTime < throttleDelay) return;
+  lastUpdateTime = now;
+  
+  // Position the info box near the cursor but not directly under it
+  positionStandaloneInfoBox(mouseX, mouseY);
+  
+  // Get the element under the cursor
+  const element = document.elementFromPoint(mouseX, mouseY);
+  if (!element) return;
+  
+  // Sample the color at the cursor position
+  const sampledColor = getColorAtPoint(mouseX, mouseY, element);
+  
+  // Update the info box with the sampled color
+  updateStandaloneInfoBox(sampledColor);
+}
+
+// Create standalone color info box
+function createStandaloneInfoBox(): void {
+  // Remove any existing info box
+  removeStandaloneInfoBox();
+  
+  // Create the info box
+  standaloneInfoBox = document.createElement('div');
+  standaloneInfoBox.className = 'standalone-color-info';
+  standaloneInfoBox.style.cssText = `
+    position: fixed;
+    z-index: 2147483646;
+    background: rgba(30, 30, 30, 0.9);
+    color: white;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    max-width: 200px;
+  `;
+  
+  // Create the color swatch
+  const swatch = document.createElement('div');
+  swatch.className = 'color-swatch';
+  swatch.style.cssText = `
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    margin-right: 10px;
+    background-color: #ffffff;
+  `;
+  
+  // Create info container
+  const info = document.createElement('div');
+  info.className = 'color-info-text';
+  info.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  `;
+  
+  // HEX value
+  const hexInfo = document.createElement('div');
+  hexInfo.className = 'color-hex';
+  hexInfo.style.cssText = `
+    font-weight: bold;
+    letter-spacing: 0.5px;
+  `;
+  
+  // RGB value
+  const rgbInfo = document.createElement('div');
+  rgbInfo.className = 'color-rgb';
+  rgbInfo.style.cssText = `
+    font-size: 12px;
+    opacity: 0.8;
+  `;
+  
+  // Add all elements to the DOM
+  info.appendChild(hexInfo);
+  info.appendChild(rgbInfo);
+  standaloneInfoBox.appendChild(swatch);
+  standaloneInfoBox.appendChild(info);
+  document.body.appendChild(standaloneInfoBox);
+  
+  // Initial position offscreen until we have a mouse position
+  standaloneInfoBox.style.left = '-9999px';
+  standaloneInfoBox.style.top = '-9999px';
+}
+
+// Position the standalone info box
+function positionStandaloneInfoBox(x: number, y: number): void {
+  if (!standaloneInfoBox) return;
+  
+  // Position the info box offset from cursor to prevent obscuring content
+  let posX = x + 20;
+  let posY = y + 20;
+  
+  // Check if we're near the right edge of the screen
+  if (posX + 200 > window.innerWidth) {
+    posX = x - 220; // Position on the left side of cursor
+  }
+  
+  // Check if we're near the bottom edge of the screen
+  if (posY + 80 > window.innerHeight) {
+    posY = y - 80; // Position above cursor
+  }
+  
+  standaloneInfoBox.style.left = `${posX}px`;
+  standaloneInfoBox.style.top = `${posY}px`;
+}
+
+// Update the standalone info box with color information
+function updateStandaloneInfoBox(color: string): void {
+  if (!standaloneInfoBox) return;
+  
+  const swatch = standaloneInfoBox.querySelector('.color-swatch') as HTMLElement;
+  const hexInfo = standaloneInfoBox.querySelector('.color-hex') as HTMLElement;
+  const rgbInfo = standaloneInfoBox.querySelector('.color-rgb') as HTMLElement;
+  
+  if (swatch && hexInfo && rgbInfo) {
+    swatch.style.backgroundColor = color;
+    hexInfo.textContent = color.toUpperCase();
+    rgbInfo.textContent = hexToRgbString(color);
+    
+    // Set text color based on background for better contrast
+    const contrastColor = getContrastColor(color);
+    hexInfo.style.color = contrastColor === '#ffffff' ? '#ffffff' : '#222222';
+  }
+}
+
+// Remove the standalone info box
+function removeStandaloneInfoBox(): void {
+  if (standaloneInfoBox && standaloneInfoBox.parentNode) {
+    standaloneInfoBox.parentNode.removeChild(standaloneInfoBox);
+    standaloneInfoBox = null;
+  }
+  
+  // Remove event listeners
+  document.removeEventListener('mousemove', handlePreviewMouseMove);
+  document.removeEventListener('keydown', removeStandaloneInfoBox);
+  document.removeEventListener('mousedown', removeStandaloneInfoBox);
+}
+
+// Start the custom color picker (fallback for browsers without EyeDropper API)
 function contentPickerStart(): void {
-  console.log('ChromaCode: Initializing picker');
+  console.log('ChromaCode: Initializing custom picker (fallback)');
   
   // If the picker is already active, clean up old elements first
-  if (isPickerActive) {
+  if (pickerActive) {
     console.log('ChromaCode: Picker already active, stopping first');
     stopColorPicker();
   }
   
-  isPickerActive = true;
+  pickerActive = true;
   
   try {
     // Create an overlay that covers the entire page
@@ -86,50 +325,10 @@ function contentPickerStart(): void {
     colorInfoBox.className = 'color-info-box';
     
     // Create magnifying glass
-    magnifierGlass = document.createElement('div');
-    magnifierGlass.className = 'magnifier-glass';
-    magnifierGlass.style.width = `${MAGNIFIER_SIZE}px`;
-    magnifierGlass.style.height = `${MAGNIFIER_SIZE}px`;
+    magnifierGlass = createMagnifier();
     
-    // Create canvas inside magnifying glass
-    magnifierCanvas = document.createElement('canvas');
-    magnifierCanvas.width = MAGNIFIER_SIZE;
-    magnifierCanvas.height = MAGNIFIER_SIZE;
-    magnifierCanvas.style.position = 'absolute';
-    magnifierCanvas.style.top = '0';
-    magnifierCanvas.style.left = '0';
-    magnifierCanvas.style.width = '100%';
-    magnifierCanvas.style.height = '100%';
-    magnifierGlass.appendChild(magnifierCanvas);
-    
-    // Create center dot for the magnifier
-    const centerDot = document.createElement('div');
-    centerDot.style.position = 'absolute';
-    centerDot.style.top = '50%';
-    centerDot.style.left = '50%';
-    centerDot.style.width = '4px';
-    centerDot.style.height = '4px';
-    centerDot.style.backgroundColor = '#FF0000';
-    centerDot.style.borderRadius = '50%';
-    centerDot.style.transform = 'translate(-50%, -50%)';
-    centerDot.style.pointerEvents = 'none';
-    centerDot.style.zIndex = '2';
-    centerDot.style.boxShadow = '0 0 2px white';
-    magnifierGlass.appendChild(centerDot);
-    
-    // Create grid overlay
-    const gridOverlay = document.createElement('div');
-    gridOverlay.style.position = 'absolute';
-    gridOverlay.style.top = '0';
-    gridOverlay.style.left = '0';
-    gridOverlay.style.width = '100%';
-    gridOverlay.style.height = '100%';
-    gridOverlay.style.backgroundImage = `linear-gradient(rgba(255,255,255,0.2) 1px, transparent 1px), 
-                                        linear-gradient(90deg, rgba(255,255,255,0.2) 1px, transparent 1px)`;
-    gridOverlay.style.backgroundSize = `${MAGNIFIER_PIXEL_SIZE}px ${MAGNIFIER_PIXEL_SIZE}px`;
-    gridOverlay.style.pointerEvents = 'none';
-    gridOverlay.style.zIndex = '1';
-    magnifierGlass.appendChild(gridOverlay);
+    // Create standalone info box for better visibility
+    createStandaloneInfoBox();
     
     // Add elements to the page
     document.body.appendChild(pickerOverlay);
@@ -164,10 +363,10 @@ function contentPickerStart(): void {
     // Disable scrolling while picker is active
     document.body.style.overflow = 'hidden';
     
-    console.log('ChromaCode: Picker initialized successfully');
+    console.log('ChromaCode: Custom picker initialized successfully');
   } catch (error) {
-    isPickerActive = false;
-    console.error('ChromaCode: Error initializing picker:', error);
+    pickerActive = false;
+    console.error('ChromaCode: Error initializing custom picker:', error);
     throw error;
   }
 }
@@ -176,12 +375,12 @@ function contentPickerStart(): void {
 function stopColorPicker(): void {
   console.log('ChromaCode: Stopping picker');
   
-  if (!isPickerActive) {
+  if (!pickerActive) {
     console.log('ChromaCode: Picker not active');
     return;
   }
   
-  isPickerActive = false;
+  pickerActive = false;
   
   try {
     // Remove elements
@@ -203,6 +402,9 @@ function stopColorPicker(): void {
       magnifierGlass.remove();
     }
     
+    // Remove standalone info box
+    removeStandaloneInfoBox();
+    
     // Remove event listeners
     document.removeEventListener('keydown', handleKeyDown, { capture: true });
     
@@ -221,514 +423,235 @@ function stopColorPicker(): void {
   }
 }
 
-// Update the magnifier view with a more robust method
-function updateMagnifierView(x: number, y: number, centerColor?: string): string {
-  if (!magnifierCanvas || !pickerOverlay) return '#ffffff';
-  
-  try {
-    const ctx = magnifierCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return '#ffffff';
-    
-    // Clear the canvas
-    ctx.clearRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
-    
-    // Fill with white background
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
-    
-    // Store original pointer-events setting
-    const originalPointerEvents = pickerOverlay.style.pointerEvents;
-    
-    // Temporarily disable the overlay to get elements underneath
-    pickerOverlay.style.pointerEvents = 'none';
-    
-    // Calculate the area we need to capture (half of magnifier size divided by zoom)
-    const captureRadius = Math.floor(MAGNIFIER_SIZE / (2 * ZOOM_FACTOR));
-    
-    // Collect all elements in the capture area
-    const elements: Element[] = [];
-    const visited = new Set<Element>();
-    
-    // Sample points in a grid pattern around the cursor
-    for (let offsetX = -captureRadius; offsetX <= captureRadius; offsetX += 2) {
-      for (let offsetY = -captureRadius; offsetY <= captureRadius; offsetY += 2) {
-        const sampleX = Math.round(x + offsetX);
-        const sampleY = Math.round(y + offsetY);
-        
-        // Skip if outside viewport
-        if (sampleX < 0 || sampleX >= window.innerWidth || 
-            sampleY < 0 || sampleY >= window.innerHeight) {
-          continue;
-        }
-        
-        const element = document.elementFromPoint(sampleX, sampleY);
-        if (element && !visited.has(element)) {
-          visited.add(element);
-          
-          // Skip our own elements
-          if (element === pickerOverlay || 
-              element === pickerCursor || 
-              element === colorInfoBox || 
-              element === magnifierGlass ||
-              element.closest('[id^="magnifier"]') !== null) {
-            continue;
-          }
-          
-          elements.push(element);
-        }
-      }
-    }
-    
-    // Prepare to collect colored rectangles
-    interface ColoredRect {
-      element: Element;
-      rect: DOMRect;
-      color: string;
-      isImage?: boolean;
-      zIndex: number;
-    }
-    
-    const coloredRects: ColoredRect[] = [];
-    
-    // Process each element - starting with elements that are likely in the background
-    elements.forEach(element => {
-      const rect = element.getBoundingClientRect();
-      const computedStyle = window.getComputedStyle(element);
-      
-      // Skip elements with zero size
-      if (rect.width === 0 || rect.height === 0) return;
-      
-      // Get element's stacking context (approximated by z-index)
-      const zIndex = parseInt(computedStyle.zIndex) || 0;
-      
-      // Get background color
-      let color = computedStyle.backgroundColor;
-      
-      // If element has a background image
-      const backgroundImage = computedStyle.backgroundImage;
-      if (backgroundImage && backgroundImage !== 'none') {
-        // Can't easily render background images, use a placeholder
-        if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
-          color = 'rgba(200, 200, 200, 0.3)';
-        }
-      }
-      
-      // If background is transparent, try text color
-      if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
-        color = computedStyle.color;
-      }
-      
-      // If still transparent, use a very light gray
-      if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
-        color = 'rgba(240, 240, 240, 0.5)';
-      }
-      
-      // Check if this is an image
-      if (element.tagName === 'IMG') {
-        coloredRects.push({
-          element,
-          rect,
-          color,
-          isImage: true,
-          zIndex
-        });
-      } else {
-        coloredRects.push({
-          element,
-          rect,
-          color,
-          zIndex
-        });
-      }
-    });
-    
-    // Sort rects by z-index to respect stacking order (draw from bottom to top)
-    coloredRects.sort((a, b) => a.zIndex - b.zIndex);
-    
-    // Calculate center of magnifier canvas
-    const centerX = MAGNIFIER_SIZE / 2;
-    const centerY = MAGNIFIER_SIZE / 2;
-    
-    // Draw all the colored rectangles
-    coloredRects.forEach(item => {
-      // Calculate element's position relative to cursor
-      const rectLeft = item.rect.left - x;
-      const rectTop = item.rect.top - y;
-      
-      // Map to canvas coordinates - center of canvas corresponds to cursor position
-      // Multiply by ZOOM_FACTOR to achieve the zooming effect
-      const canvasX = centerX + (rectLeft * ZOOM_FACTOR);
-      const canvasY = centerY + (rectTop * ZOOM_FACTOR);
-      const canvasWidth = item.rect.width * ZOOM_FACTOR;
-      const canvasHeight = item.rect.height * ZOOM_FACTOR;
-      
-      if (item.isImage) {
-        try {
-          const imgElement = item.element as HTMLImageElement;
-          
-          // Skip if image isn't fully loaded
-          if (!imgElement.complete) return;
-          
-          // Get exact cursor position within the image
-          const imageX = x - item.rect.left;
-          const imageY = y - item.rect.top;
-          
-          // Only proceed if cursor is within the image
-          if (imageX >= 0 && imageX < item.rect.width &&
-              imageY >= 0 && imageY < item.rect.height) {
-            
-            // Scale factor between natural size and displayed size
-            const scaleX = imgElement.naturalWidth / item.rect.width;
-            const scaleY = imgElement.naturalHeight / item.rect.height;
-            
-            // Calculate source rectangle in the original image
-            // This centers the extraction around the cursor position
-            const srcX = Math.max(0, Math.floor(imageX * scaleX - (captureRadius * scaleX)));
-            const srcY = Math.max(0, Math.floor(imageY * scaleY - (captureRadius * scaleY)));
-            const srcWidth = Math.min(imgElement.naturalWidth - srcX, Math.ceil(captureRadius * 2 * scaleX));
-            const srcHeight = Math.min(imgElement.naturalHeight - srcY, Math.ceil(captureRadius * 2 * scaleY));
-            
-            // Calculate destination rectangle, making sure the cursor position is centered
-            const drawX = canvasX - (imageX * ZOOM_FACTOR) + (srcX / scaleX * ZOOM_FACTOR);
-            const drawY = canvasY - (imageY * ZOOM_FACTOR) + (srcY / scaleY * ZOOM_FACTOR);
-            const drawWidth = srcWidth / scaleX * ZOOM_FACTOR;
-            const drawHeight = srcHeight / scaleY * ZOOM_FACTOR;
-            
-            // Draw the image
-            ctx.drawImage(
-              imgElement,
-              srcX, srcY, srcWidth, srcHeight,
-              drawX, drawY, drawWidth, drawHeight
-            );
-          }
-        } catch (e) {
-          console.error('ChromaCode: Error rendering image in magnifier:', e);
-          // Fallback to a colored rectangle
-          ctx.fillStyle = 'rgba(180, 180, 180, 0.5)';
-          ctx.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
-        }
-      } else {
-        // Draw regular element as a colored rectangle
-        ctx.fillStyle = item.color;
-        ctx.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
-      }
-    });
-    
-    // Make sure pickerOverlay still exists before trying to restore its state
-    if (pickerOverlay) {
-      // Restore overlay pointer events
-      pickerOverlay.style.pointerEvents = originalPointerEvents;
-    }
-    
-    // Draw a precise crosshair at center
-    const hairSize = 10;
-    const hairWidth = 1;
-    
-    // Horizontal line
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.lineWidth = hairWidth;
-    ctx.beginPath();
-    ctx.moveTo(centerX - hairSize, centerY);
-    ctx.lineTo(centerX + hairSize, centerY);
-    ctx.stroke();
-    
-    // Vertical line
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY - hairSize);
-    ctx.lineTo(centerX, centerY + hairSize);
-    ctx.stroke();
-    
-    // Add white outline to crosshair for better visibility
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.lineWidth = hairWidth + 1;
-    ctx.beginPath();
-    ctx.moveTo(centerX - hairSize - 1, centerY);
-    ctx.lineTo(centerX + hairSize + 1, centerY);
-    ctx.stroke();
-    
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY - hairSize - 1);
-    ctx.lineTo(centerX, centerY + hairSize + 1);
-    ctx.stroke();
-    
-    // Draw a border around the central pixel
-    const pixelSize = ZOOM_FACTOR;
-    ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(
-      centerX - pixelSize / 2, 
-      centerY - pixelSize / 2, 
-      pixelSize, 
-      pixelSize
-    );
-    
-    // Get the exact color from the center of the magnifier
-    let magnifierCenterColor = '#ffffff';
-    try {
-      const pixelData = ctx.getImageData(centerX, centerY, 1, 1).data;
-      magnifierCenterColor = rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
-    } catch (e) {
-      console.error('ChromaCode: Error reading center pixel from magnifier:', e);
-      // Fall back to provided centerColor or element color if we can't read directly
-      magnifierCenterColor = centerColor || getColorAtPoint(x, y);
-    }
-    
-    // Add color info label to magnifier with more modern style
-    // Create gradient background for the label
-    const labelGradient = ctx.createLinearGradient(0, MAGNIFIER_SIZE - 38, 0, MAGNIFIER_SIZE);
-    labelGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    labelGradient.addColorStop(1, 'rgba(0, 0, 0, 0.75)');
-    
-    // Fill the bottom area with gradient
-    ctx.fillStyle = labelGradient;
-    ctx.fillRect(0, MAGNIFIER_SIZE - 38, MAGNIFIER_SIZE, 38);
-    
-    // Add color swatch
-    const swatchSize = 12;
-    const swatchX = MAGNIFIER_SIZE / 2 - 50;
-    const swatchY = MAGNIFIER_SIZE - 21;
-    
-    // Draw color swatch with border
-    ctx.fillStyle = magnifierCenterColor;
-    ctx.fillRect(swatchX, swatchY, swatchSize, swatchSize);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(swatchX, swatchY, swatchSize, swatchSize);
-    
-    // Draw text with better styling
-    ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.textAlign = 'left';
-    ctx.fillText(magnifierCenterColor.toUpperCase(), swatchX + swatchSize + 6, MAGNIFIER_SIZE - 12);
-    
-    // Try to add RGB value if we can compute it
-    try {
-      // Extract RGB components
-      const colorValue = magnifierCenterColor.replace('#', '');
-      if (colorValue.length === 6) {
-        const r = parseInt(colorValue.substr(0, 2), 16);
-        const g = parseInt(colorValue.substr(2, 2), 16);
-        const b = parseInt(colorValue.substr(4, 2), 16);
-        
-        // Draw RGB value in smaller font
-        ctx.font = '10px system-ui, -apple-system, sans-serif';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-        ctx.fillText(`RGB(${r}, ${g}, ${b})`, swatchX + swatchSize + 6, MAGNIFIER_SIZE - 24);
-      }
-    } catch (e) {
-      // Skip RGB display if there's an error
-    }
-    
-    return magnifierCenterColor;
-  } catch (error) {
-    console.error('ChromaCode: Error updating magnifier view:', error);
-    return centerColor || '#ffffff';
-  }
-}
-
 // Handle mouse movement to show color under cursor
 function handleMouseMove(e: MouseEvent): void {
-  if (!isPickerActive) return;
+  if (!pickerActive) return;
   
   try {
-    if (!pickerCursor || !magnifierGlass || !colorInfoBox) return;
+    // Store mouse position
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
     
-    // Always update cursor position for smooth tracking
-    pickerCursor.style.left = `${e.clientX}px`;
-    pickerCursor.style.top = `${e.clientY}px`;
-    
-    // Position the magnifying glass - offset it to avoid blocking mouse
-    // Adjust position based on which quadrant of the screen we're in
-    let magX: number, magY: number;
-    
-    // Determine which corner to place the magnifier in (opposite of cursor position)
-    if (e.clientX < window.innerWidth / 2) {
-      // Cursor is on left side, place magnifier on right
-      magX = e.clientX + 40;
-    } else {
-      // Cursor is on right side, place magnifier on left
-      magX = e.clientX - MAGNIFIER_SIZE - 40;
-    }
-    
-    if (e.clientY < window.innerHeight / 2) {
-      // Cursor is on top half, place magnifier below
-      magY = e.clientY + 40;
-    } else {
-      // Cursor is on bottom half, place magnifier above
-      magY = e.clientY - MAGNIFIER_SIZE - 40;
-    }
-    
-    // Ensure magnifier stays within viewport bounds
-    magX = Math.max(10, Math.min(window.innerWidth - MAGNIFIER_SIZE - 10, magX));
-    magY = Math.max(10, Math.min(window.innerHeight - MAGNIFIER_SIZE - 10, magY));
-    
-    magnifierGlass.style.left = `${magX}px`;
-    magnifierGlass.style.top = `${magY}px`;
-    
-    // First, get the true color under the cursor by temporarily hiding UI elements
-    if (!pickerOverlay) return;
-    
-    // Save current visibility states
-    const originalOverlayPointerEvents = pickerOverlay.style.pointerEvents;
-    const originalCursorDisplay = pickerCursor.style.display;
-    const originalInfoBoxDisplay = colorInfoBox.style.display;
-    const originalMagnifierDisplay = magnifierGlass.style.display;
-    
-    // Hide picker elements temporarily to get accurate element underneath
-    pickerOverlay.style.pointerEvents = 'none';
-    pickerCursor.style.display = 'none';
-    colorInfoBox.style.display = 'none';
-    magnifierGlass.style.display = 'none';
-    
-    // Get element under the cursor with UI hidden
-    const elementUnderCursor = document.elementFromPoint(e.clientX, e.clientY);
-    
-    // Get accurate color with UI hidden
-    let actualColor = '';
-    if (elementUnderCursor) {
-      actualColor = getColorAtPoint(e.clientX, e.clientY, elementUnderCursor);
-    } else {
-      actualColor = '#ffffff'; // Default white if no element
-    }
-    
-    // Restore visibility
-    pickerOverlay.style.pointerEvents = originalOverlayPointerEvents;
-    pickerCursor.style.display = originalCursorDisplay;
-    colorInfoBox.style.display = originalInfoBoxDisplay;
-    magnifierGlass.style.display = originalMagnifierDisplay;
-    
-    // Now update the magnifying glass view with accurate color information from the element
-    // This returns the actual color from the center of the magnifier
-    const magnifierCenterColor = updateMagnifierView(e.clientX, e.clientY, actualColor);
-    
-    // Update cursor border color immediately for better visibility
-    // Using the color from the magnifier center for consistency
-    pickerCursor.style.borderColor = getContrastColor(magnifierCenterColor);
-    pickerCursor.style.backgroundColor = magnifierCenterColor + '80'; // Add 50% transparency
-    
-    // Throttle detailed color info box updates to improve performance
+    // Throttle updates for better performance
     const now = Date.now();
-    if (now - lastUpdateTime < throttleDelay) {
-      return;
-    }
+    if (now - lastUpdateTime < throttleDelay) return;
     lastUpdateTime = now;
     
-    // Update color info box with the color from the magnifier center
-    const rgbColor = contentHexToRgb(magnifierCenterColor);
-    colorInfoBox.innerHTML = `
-      <div class="flex items-center gap-2">
-        <div class="color-swatch" style="background-color: ${magnifierCenterColor};"></div>
-        <div>
-          <div class="font-semibold">${magnifierCenterColor.toUpperCase()}</div>
-          <div class="text-xs opacity-70">${rgbColor}</div>
-        </div>
-      </div>
-    `;
-    colorInfoBox.style.color = '#333';
+    // Skip if position hasn't changed enough (avoid micro-movements)
+    if (Math.abs(mouseX - lastProcessedPosition.x) < 2 && 
+        Math.abs(mouseY - lastProcessedPosition.y) < 2) {
+      return;
+    }
     
-    // Position the info box
-    colorInfoBox.style.left = (e.clientX + 20) + 'px';
-    colorInfoBox.style.top = (e.clientY + 20) + 'px';
+    // Update position
+    lastProcessedPosition = { x: mouseX, y: mouseY };
     
-    // Update last processed position
-    lastProcessedPosition.x = e.clientX;
-    lastProcessedPosition.y = e.clientY;
-  } catch (error) {
-    console.error('ChromaCode: Error during mouse move:', error);
+    // Update cursor position
+    if (pickerCursor) {
+      pickerCursor.style.left = mouseX + 'px';
+      pickerCursor.style.top = mouseY + 'px';
+      pickerCursor.style.display = 'block';
+    }
+    
+    // Update magnifier position if available
+    if (magnifierGlass) {
+      const magnifierRadius = MAGNIFIER_SIZE / 2;
+      
+      // Position the magnifier near the cursor, but avoid going off screen
+      let magnifierX = mouseX + 30;
+      let magnifierY = mouseY - magnifierRadius - 20;
+      
+      // If too close to top of window, move below cursor
+      if (magnifierY < 20) {
+        magnifierY = mouseY + 30;
+      }
+      
+      // If too close to right edge, move to left of cursor
+      if (magnifierX + MAGNIFIER_SIZE > window.innerWidth - 20) {
+        magnifierX = mouseX - MAGNIFIER_SIZE - 30;
+      }
+      
+      magnifierGlass.style.left = magnifierX + 'px';
+      magnifierGlass.style.top = magnifierY + 'px';
+      magnifierGlass.style.display = 'block';
+      
+      // Update magnifier view
+      updateMagnifierView(mouseX, mouseY);
+    }
+    
+    // Update the standalone info box
+    if (standaloneInfoBox) {
+      // Position the info box
+      positionStandaloneInfoBox(mouseX, mouseY);
+      
+      // Update with the current center pixel color
+      updateStandaloneInfoBox(currentCenterPixelColor);
+    }
+  } catch (error: any) {
+    console.error('ChromaCode: Error tracking mouse:', error);
   }
-  
-  // Always prevent default behavior to avoid text selection and other interactions
-  e.preventDefault();
-  e.stopPropagation();
 }
 
 // Handle mouse click to select a color
 function handleMouseClick(e: MouseEvent): void {
-  if (!isPickerActive) return;
+  if (!pickerActive) return;
   
   try {
+    // Prevent default behavior and stop propagation
     e.preventDefault();
     e.stopPropagation();
     
-    if (!pickerOverlay || !pickerCursor || !colorInfoBox || !magnifierGlass || !magnifierCanvas) return;
+    // Get the color at the exact cursor position
+    const cursorX = Math.round(e.clientX);
+    const cursorY = Math.round(e.clientY);
     
-    // Get ONLY the color from the center of the magnifier
-    // This ensures what you see is what you pick
-    const magnifierCtx = magnifierCanvas.getContext('2d', { willReadFrequently: true });
-    const centerX = MAGNIFIER_SIZE / 2;
-    const centerY = MAGNIFIER_SIZE / 2;
-    let color = '#ffffff'; // Default white
+    // Get the element under the cursor for more precise color picking
+    const targetElement = document.elementFromPoint(cursorX, cursorY);
     
-    if (magnifierCtx) {
-      try {
-        // Get the exact pixel at the center of the magnifier
-        const pixelData = magnifierCtx.getImageData(centerX, centerY, 1, 1).data;
-        color = rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
-        console.log('ChromaCode: Color from magnifier center:', color);
-      } catch (e) {
-        console.error('ChromaCode: Error reading from magnifier:', e);
+    // Get the color, prioritizing the magnifier's center pixel color
+    // which should be the most accurate representation
+    let selectedColor = currentCenterPixelColor;
+    
+    // Validate the color format - should be a proper hex color
+    if (!selectedColor.match(/^#[0-9A-Fa-f]{6}$/)) {
+      console.error('ChromaCode: Invalid center pixel color format:', selectedColor);
+      // Try to fix the color format if possible
+      if (selectedColor.match(/^[0-9A-Fa-f]{6}$/)) {
+        selectedColor = '#' + selectedColor;
+      } else {
+        // Fall back to a default color
+        selectedColor = '#808080';
       }
     }
     
-    // Temporarily hide UI elements for visual feedback
-    // Save current visibility states
-    const originalOverlayPointerEvents = pickerOverlay.style.pointerEvents;
-    const originalCursorDisplay = pickerCursor.style.display;
-    const originalInfoBoxDisplay = colorInfoBox.style.display;
-    const originalMagnifierDisplay = magnifierGlass.style.display;
+    // Double-check by directly sampling at click position
+    if (targetElement) {
+      const directColor = getColorAtPoint(cursorX, cursorY, targetElement);
+      
+      // If the colors differ significantly and the direct color isn't transparent,
+      // we'll take the direct color as it might be more accurate for some elements
+      if (directColor !== selectedColor && 
+          directColor !== '#ffffff' && 
+          directColor !== '#000000' &&
+          !isTransparentLike(directColor)) {
+        console.log('ChromaCode: Direct color differs from magnifier:', directColor, selectedColor);
+        
+        // Check if the currentCenterPixelColor is grayscale (R=G=B)
+        const isGrayscale = isGrayscaleColor(selectedColor);
+        const isDirectGrayscale = isGrayscaleColor(directColor);
+        
+        // If magnifier color is grayscale but direct color isn't, use direct color
+        if (isGrayscale && !isDirectGrayscale) {
+          console.log('ChromaCode: Using direct color because magnifier color is grayscale');
+          selectedColor = directColor;
+        }
+      }
+    }
     
-    // Hide magnifier but keep cursor visible for feedback
-    pickerOverlay.style.pointerEvents = 'none';
-    magnifierGlass.style.display = 'none';
+    console.log('ChromaCode: Final color selected:', selectedColor);
     
-    // Show the selected color in the cursor before closing
-    // This gives visual feedback that the correct color was selected
-    pickerCursor.style.backgroundColor = color;
-    pickerCursor.style.borderColor = getContrastColor(color);
-    pickerCursor.style.display = 'block';
-    pickerCursor.classList.add('active'); // Add active class for animation
-    
-    // Display the selected color in the color info box
-    const rgbColor = contentHexToRgb(color);
-    colorInfoBox.innerHTML = `
-      <div class="flex items-center gap-2">
-        <div class="color-swatch" style="background-color: ${color};"></div>
-        <div>
-          <div class="font-semibold">${color.toUpperCase()}</div>
-          <div class="text-xs opacity-70">${rgbColor}</div>
-        </div>
-      </div>
-    `;
-    colorInfoBox.style.display = 'block';
-    
-    // A brief delay to show the selected color before closing
-    setTimeout(() => {
-      // Send the color back to the extension
-      chrome.runtime.sendMessage({
-        action: 'colorPicked',
-        color: color
-      }, (response?: any) => {
-        if (chrome.runtime.lastError) {
-          console.error('ChromaCode: Error sending picked color:', chrome.runtime.lastError);
-        } else {
-          console.log('ChromaCode: Color sent successfully:', response);
+    // Show visual feedback that color was selected
+    if (pickerCursor) {
+      // Store original size to restore
+      const originalSize = pickerCursor.style.width;
+      const originalBorder = pickerCursor.style.border;
+      
+      // Update cursor style to show the selected color
+      pickerCursor.style.backgroundColor = selectedColor;
+      pickerCursor.style.border = `2px solid ${selectedColor}`;
+      
+      // Apply the active animation
+      pickerCursor.classList.add('active');
+      
+      // Delay sending the color to provide visual feedback
+      setTimeout(() => {
+        // Restore cursor style
+        if (pickerCursor) {
+          pickerCursor.style.width = originalSize;
+          pickerCursor.style.border = originalBorder;
+          pickerCursor.classList.remove('active');
         }
         
-        // Stop the picker
+        console.log('ChromaCode: Sending picked color to background:', selectedColor);
+        
+        // Send the selected color to the background script
+        // Note: The background script is expecting 'colorPicked' action
+        chrome.runtime.sendMessage({
+          action: 'colorPicked',
+          color: selectedColor
+        }, response => {
+          if (chrome.runtime.lastError) {
+            console.error('ChromaCode: Error sending color to background:', chrome.runtime.lastError);
+          } else {
+            console.log('ChromaCode: Background response:', response);
+          }
+        });
+        
+        // Stop the color picker
         stopColorPicker();
+      }, 350);
+    } else {
+      // If cursor element isn't available, just send the color immediately
+      console.log('ChromaCode: Sending picked color to background (no animation):', selectedColor);
+      
+      chrome.runtime.sendMessage({
+        action: 'colorPicked',
+        color: selectedColor
+      }, response => {
+        if (chrome.runtime.lastError) {
+          console.error('ChromaCode: Error sending color to background:', chrome.runtime.lastError);
+        } else {
+          console.log('ChromaCode: Background response:', response);
+        }
       });
-    }, 350); // Delay for visual feedback
-    
-    console.log('ChromaCode: Final color picked:', color);
-  } catch (error) {
+      
+      stopColorPicker();
+    }
+  } catch (error: any) {
     console.error('ChromaCode: Error handling click:', error);
+    
+    // Send error and stop picker
+    chrome.runtime.sendMessage({
+      action: 'colorPickError',
+      error: error.message || 'Unknown error during color selection'
+    });
+    
     stopColorPicker();
   }
 }
 
+// Helper to check if a color is transparent or close to transparent
+function isTransparentLike(color: string): boolean {
+  return color === 'transparent' || 
+         color === 'rgba(0, 0, 0, 0)' || 
+         color.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(\.\d+)?\s*\)/) !== null;
+}
+
+// Helper to check if a color is grayscale (all RGB channels equal)
+function isGrayscaleColor(hexColor: string): boolean {
+  // Remove the # if present
+  const hex = hexColor.replace('#', '');
+  
+  // Handle 6-digit hex
+  if (hex.length === 6) {
+    const r = hex.substring(0, 2);
+    const g = hex.substring(2, 4);
+    const b = hex.substring(4, 6);
+    
+    return r === g && g === b;
+  }
+  
+  // Handle 3-digit hex
+  if (hex.length === 3) {
+    return hex[0] === hex[1] && hex[1] === hex[2];
+  }
+  
+  return false;
+}
+
 // Handle ESC key to cancel color picking
 function handleKeyDown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && isPickerActive) {
+  if (e.key === 'Escape' && pickerActive) {
     console.log('ChromaCode: ESC pressed, canceling picker');
     stopColorPicker();
   }
@@ -755,7 +678,7 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
         if (imageX >= 0 && imageX < rect.width && imageY >= 0 && imageY < rect.height) {
           // Create a canvas to get the image data
           const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d', { willReadFrequently: true });
+          const context = canvas.getContext('2d', { willReadFrequently: true, alpha: false });
           
           if (context) {
             // Scale coordinates to match the natural image size
@@ -774,12 +697,8 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
             try {
               // Get pixel data
               const pixelData = context.getImageData(scaledX, scaledY, 1, 1).data;
-              // Only use hex for fully opaque pixels, otherwise use rgba
-              if (pixelData[3] < 255) {
-                return `rgba(${pixelData[0]}, ${pixelData[1]}, ${pixelData[2]}, ${(pixelData[3] / 255).toFixed(2)})`;
-              } else {
-                return rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
-              }
+              // Always use hex - no transparency
+              return rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
             } catch (e) {
               console.error('ChromaCode: Image color extraction error:', e);
             }
@@ -790,23 +709,61 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
       }
     }
     
-    // Create a small canvas to grab the exact pixel color for any element
+    // For non-image elements, we'll use a more sophisticated approach
+    // to get the exact rendered color at a point
+    
+    // Get the window's device pixel ratio for accurate rendering
+    const pixelRatio = window.devicePixelRatio || 1;
+    
+    // Create a canvas for capturing the element's appearance
     const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d', { willReadFrequently: true });
+    canvas.width = 3 * pixelRatio;
+    canvas.height = 3 * pixelRatio;
+    
+    const context = canvas.getContext('2d', { 
+      willReadFrequently: true,
+      alpha: false // Disable alpha to ensure solid colors
+    });
     
     if (!context) {
       console.error('ChromaCode: Could not get canvas context');
       return '#ffffff';
     }
     
-    // Take device pixel ratio into account for retina/high DPI displays
-    const pixelRatio = window.devicePixelRatio || 1;
+    // Use html2canvas-like approach for complex elements
+    if (element && !(element instanceof HTMLImageElement)) {
+      try {
+        // Try CSS computed color first - often more accurate for solid colors
+        const style = window.getComputedStyle(element);
+        let elementColor = style.backgroundColor;
+        
+        // If background color exists and isn't transparent, use it directly
+        if (elementColor && elementColor !== 'rgba(0, 0, 0, 0)' && elementColor !== 'transparent') {
+          return removeTransparency(elementColor.startsWith('#') ? elementColor : rgbStringToHex(elementColor));
+        }
+        
+        // For text, use the text color
+        const textColor = style.color;
+        if (element.textContent && textColor && textColor !== 'rgba(0, 0, 0, 0)' && textColor !== 'transparent') {
+          // Check if the click point is within or close to text content
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const rects = range.getClientRects();
+          
+          for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+              return removeTransparency(textColor.startsWith('#') ? textColor : rgbStringToHex(textColor));
+            }
+          }
+        }
+      } catch (e) {
+        console.error('ChromaCode: Error getting element computed style:', e);
+      }
+    }
     
-    // Make the canvas larger for higher resolution screens
-    canvas.width = 3 * pixelRatio;
-    canvas.height = 3 * pixelRatio;
-    
-    // Position it centered on the target point
+    // Fall back to bitmap sampling approach
+    // Position our sampling canvas - completely hidden
     canvas.style.position = 'absolute';
     canvas.style.left = (x - 1) + 'px';
     canvas.style.top = (y - 1) + 'px';
@@ -814,7 +771,7 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
     canvas.style.height = '3px';
     canvas.style.pointerEvents = 'none';
     canvas.style.zIndex = '-1';
-    canvas.style.opacity = '0';  // Make it invisible
+    canvas.style.opacity = '0';
     
     // Temporarily hide our color picker UI
     let overlayDisplay = 'none';
@@ -845,43 +802,45 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
     // Add the canvas to the page temporarily
     document.body.appendChild(canvas);
     
-    // We can use the element under cursor as a starting point
+    // If we don't have a specific element, find one
     if (!element) {
-      const found = document.elementFromPoint(x, y);
-      if (found) {
-        element = found;
-      }
+      element = document.elementFromPoint(x, y) || undefined;
     }
     
+    // For complex elements or unknown situations, try to capture screen at that point
     if (element) {
-      // Use a special case for normal elements with solid background colors
+      // Try to get actual rendered appearance
       try {
-        // Start with element's background color
+        // Fill with white background as default
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Try to get the page's background color
+        const bodyStyle = window.getComputedStyle(document.body);
+        const bodyColor = bodyStyle.backgroundColor;
+        if (bodyColor && bodyColor !== 'rgba(0, 0, 0, 0)' && bodyColor !== 'transparent') {
+          context.fillStyle = removeTransparency(bodyColor);
+          context.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+          const htmlStyle = window.getComputedStyle(document.documentElement);
+          const htmlColor = htmlStyle.backgroundColor;
+          if (htmlColor && htmlColor !== 'rgba(0, 0, 0, 0)' && htmlColor !== 'transparent') {
+            context.fillStyle = removeTransparency(htmlColor);
+            context.fillRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+        
+        // Get element's color
         const elemStyle = window.getComputedStyle(element);
         let bgColor = elemStyle.backgroundColor;
         
-        // If it's not transparent, use it to fill the canvas
-        if (bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-          context.fillStyle = bgColor;
+        // If element has a visible background, draw it
+        if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+          context.fillStyle = removeTransparency(bgColor);
           context.fillRect(0, 0, canvas.width, canvas.height);
-        } else {
-          // Try to find a parent with non-transparent background
-          let parent = element.parentElement;
-          while (parent) {
-            const parentStyle = window.getComputedStyle(parent);
-            bgColor = parentStyle.backgroundColor;
-            
-            if (bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-              context.fillStyle = bgColor;
-              context.fillRect(0, 0, canvas.width, canvas.height);
-              break;
-            }
-            
-            parent = parent.parentElement;
-          }
         }
       } catch (e) {
-        console.error('ChromaCode: Error getting background color:', e);
+        console.error('ChromaCode: Error getting element appearance:', e);
       }
     }
     
@@ -891,13 +850,12 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
     let pixelData;
     
     try {
-      // Sample a 1x1 pixel from the center of our 3x3 canvas
+      // Sample a 1x1 pixel from the center of our canvas
       pixelData = context.getImageData(centerX, centerY, 1, 1).data;
     } catch (e) {
       console.error('ChromaCode: Error reading pixel data:', e);
       
-      // If we can't read pixel data (cross-origin or other issues),
-      // fall back to element's computed style
+      // Fall back to element's computed style
       if (element) {
         const style = window.getComputedStyle(element);
         let color = style.backgroundColor;
@@ -915,7 +873,7 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
         if (colorInfoBox) colorInfoBox.style.display = infoBoxDisplay;
         if (magnifierGlass) magnifierGlass.style.display = magnifierDisplay;
         
-        return color.startsWith('#') ? color : rgbStringToHex(color);
+        return removeTransparency(color.startsWith('#') ? color : rgbStringToHex(color));
       }
       
       // If all else fails, return white
@@ -931,57 +889,33 @@ function getColorAtPoint(x: number, y: number, element?: Element): string {
     if (colorInfoBox) colorInfoBox.style.display = infoBoxDisplay;
     if (magnifierGlass) magnifierGlass.style.display = magnifierDisplay;
     
-    // Convert to hex, with rgba handling if necessary
-    if (pixelData[3] < 255) {
-      // Has transparency, use rgba format
-      return `rgba(${pixelData[0]}, ${pixelData[1]}, ${pixelData[2]}, ${(pixelData[3] / 255).toFixed(2)})`;
-    } else {
-      // Fully opaque, use hex
-      return rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
-    }
+    // Always return a solid color - no transparency
+    return rgbToHex(pixelData[0], pixelData[1], pixelData[2]);
   } catch (error) {
     console.error('ChromaCode: Error in getColorAtPoint:', error);
     
-    // Fall back to original implementation if our new approach fails
-    // Get the proper element to check - either the one passed in or find one at the cursor
-    const targetElement = element || document.elementFromPoint(x, y)!;
-    
-    // If no element found, return default white
-    if (!targetElement) {
-      return '#ffffff';
-    }
-    
-    // Try to get color directly from CSS of the element and its stack
-    // Start with the current element
-    const style = window.getComputedStyle(targetElement);
-    let color = style.backgroundColor;
-    
-    // If background is transparent, try text color
-    if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
-      color = style.color;
-    }
-    
-    // If color is still transparent, traverse up the DOM
-    let parentElement = targetElement.parentElement;
-    while (parentElement && (color === 'rgba(0, 0, 0, 0)' || color === 'transparent')) {
-      const parentStyle = window.getComputedStyle(parentElement);
-      color = parentStyle.backgroundColor;
-      
-      // If still transparent, try text color
-      if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
-        color = parentStyle.color;
+    // Fall back to simplified approach if our main approach fails
+    if (element) {
+      try {
+        const style = window.getComputedStyle(element);
+        let color = style.backgroundColor;
+        
+        // If background is transparent, try text color
+        if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent') {
+          color = style.color;
+        }
+        
+        // If we got a valid color, use it
+        if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
+          return removeTransparency(color.startsWith('#') ? color : rgbStringToHex(color));
+        }
+      } catch (e) {
+        console.error('ChromaCode: Error getting element style:', e);
       }
-      
-      parentElement = parentElement.parentElement;
     }
     
-    // If we still have no color, default to white
-    if (color === 'rgba(0, 0, 0, 0)' || color === 'transparent' || !color) {
-      color = '#ffffff';
-    }
-    
-    // Convert to hex color if it's not already
-    return color.startsWith('#') ? color : rgbStringToHex(color);
+    // Return a default if all else fails
+    return '#333333'; // Using a dark gray as default is often better than white
   }
 }
 
@@ -1049,6 +983,824 @@ function contentHexToRgb(hex: string): string {
   }
   
   // Convert to RGB
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  
+  // Return RGB format
+  return `RGB(${r}, ${g}, ${b})`;
+}
+
+// Remove transparency from a color, blending with white background
+function removeTransparency(color: string): string {
+  try {
+    // If already a hex color without transparency, return as is
+    if (color.startsWith('#') && (color.length === 7 || color.length === 4)) {
+      return color;
+    }
+    
+    // Handle rgb/rgba format
+    if (color.startsWith('rgb')) {
+      const parts = color.match(/[\d.]+/g);
+      if (!parts) return '#ffffff';
+      
+      if (parts.length >= 3) {
+        // RGB values
+        const r = parseInt(parts[0], 10);
+        const g = parseInt(parts[1], 10);
+        const b = parseInt(parts[2], 10);
+        
+        // If it's rgba with alpha channel
+        if (parts.length >= 4) {
+          const alpha = parseFloat(parts[3]);
+          
+          // Blend with white background if has transparency
+          if (alpha < 1) {
+            // Simple alpha blending formula: C_result = C_fg * alpha + C_bg * (1 - alpha)
+            // Where background (C_bg) is white (255, 255, 255)
+            const blendedR = Math.round(r * alpha + 255 * (1 - alpha));
+            const blendedG = Math.round(g * alpha + 255 * (1 - alpha));
+            const blendedB = Math.round(b * alpha + 255 * (1 - alpha));
+            
+            return rgbToHex(blendedR, blendedG, blendedB);
+          }
+        }
+        
+        // For solid colors, just convert to hex
+        return rgbToHex(r, g, b);
+      }
+    }
+    
+    // For any other format or parsing failure, return white instead of a neutral gray
+    return '#ffffff';
+  } catch (error) {
+    console.error('ChromaCode: Error removing transparency:', error);
+    return '#ffffff';
+  }
+}
+
+// Create the magnifier component
+function createMagnifier(): HTMLElement {
+  try {
+    const magnifier = document.createElement('div');
+    magnifier.id = 'magnifier-glass';
+    magnifier.className = 'magnifier-glass';
+    magnifier.style.cssText = 'pointer-events: none; position: fixed; z-index: 2147483647; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.3); overflow: hidden; width: 150px; height: 150px; display: none;';
+    
+    // Create canvas for the magnification
+    magnifierCanvas = document.createElement('canvas');
+    magnifierCanvas.width = MAGNIFIER_SIZE;
+    magnifierCanvas.height = MAGNIFIER_SIZE;
+    magnifierCanvas.style.cssText = 'width: 100%; height: 100%; position: absolute; top: 0; left: 0;';
+    
+    // Get canvas context for drawing
+    magnifierContext = magnifierCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+    if (!magnifierContext) {
+      console.error('ChromaCode: Could not get canvas context for magnifier');
+      throw new Error('Could not create canvas context');
+    }
+    
+    // Initial fill
+    magnifierContext.fillStyle = '#ffffff';
+    magnifierContext.fillRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+    
+    magnifier.appendChild(magnifierCanvas);
+    return magnifier;
+  } catch (error) {
+    console.error('ChromaCode: Error creating magnifier:', error);
+    throw error;
+  }
+}
+
+// Update the magnifier view to show magnified pixels around the cursor
+function updateMagnifierView(x: number, y: number): void {
+  if (!magnifierCanvas || !magnifierContext) {
+    console.error('ChromaCode: Magnifier canvas or context is not available');
+    return;
+  }
+
+  try {
+    // Get the actual screen pixel ratio for high-DPI displays
+    const pixelRatio = window.devicePixelRatio || 1;
+    
+    // Calculate the area to capture based on the magnifier size and zoom factor
+    const captureSize = Math.ceil(MAGNIFIER_SIZE / ZOOM_FACTOR);
+    const halfCaptureSize = Math.floor(captureSize / 2);
+    
+    // Round coordinates to whole pixels
+    const cursorX = Math.round(x);
+    const cursorY = Math.round(y);
+
+    // Create a temporary canvas for the screen capture
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = captureSize * pixelRatio;
+    tempCanvas.height = captureSize * pixelRatio;
+    
+    const tempContext = tempCanvas.getContext('2d', { 
+      willReadFrequently: true,
+      alpha: false // No transparency to ensure colors are accurate
+    });
+    
+    if (!tempContext) {
+      console.error('ChromaCode: Could not get temporary canvas context');
+      return;
+    }
+    
+    // Fill with white background
+    tempContext.fillStyle = '#ffffff';
+    tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+    
+    // Temporarily hide color picker UI to get accurate colors
+    const elementsToHide = [pickerOverlay, pickerCursor, colorInfoBox, magnifierGlass];
+    const originalVisibility: {element: HTMLElement | null, style: string}[] = [];
+    
+    // Store original visibility and hide elements
+    elementsToHide.forEach(element => {
+      if (element && element.style) {
+        originalVisibility.push({
+          element,
+          style: element.style.display
+        });
+        element.style.display = 'none';
+      }
+    });
+    
+    try {
+      // Get all elements at and around the cursor position
+      const areaElements: Element[] = [];
+      const visited = new Set<Element>();
+      
+      // Sample points in a grid pattern around the cursor - use smaller step for better coverage
+      for (let offsetX = -halfCaptureSize; offsetX <= halfCaptureSize; offsetX += 2) {
+        for (let offsetY = -halfCaptureSize; offsetY <= halfCaptureSize; offsetY += 2) {
+          const sampleX = cursorX + offsetX;
+          const sampleY = cursorY + offsetY;
+          
+          // Skip if outside viewport
+          if (sampleX < 0 || sampleX >= window.innerWidth || 
+              sampleY < 0 || sampleY >= window.innerHeight) {
+            continue;
+          }
+          
+          const elements = document.elementsFromPoint(sampleX, sampleY);
+          for (const element of elements) {
+            if (!visited.has(element) && 
+                !elementsToHide.includes(element as HTMLElement) && 
+                element !== document.documentElement && 
+                element !== document.body) {
+              visited.add(element);
+              areaElements.push(element);
+            }
+          }
+        }
+      }
+      
+      // Sort elements by z-index and position in the DOM
+      // Reverse the order to get proper visual stacking (highest z-index last)
+      areaElements.sort((a, b) => {
+        const aStyle = window.getComputedStyle(a);
+        const bStyle = window.getComputedStyle(b);
+        const aZIndex = parseInt(aStyle.zIndex) || 0;
+        const bZIndex = parseInt(bStyle.zIndex) || 0;
+        
+        // First compare z-index
+        if (aZIndex !== bZIndex) return aZIndex - bZIndex;
+        
+        // If same z-index, use DOM position as a tiebreaker
+        const aPosition = getDOMPosition(a);
+        const bPosition = getDOMPosition(b);
+        return aPosition - bPosition;
+      });
+      
+      // Get page background color
+      const bodyBgColor = getComputedStyle(document.body).backgroundColor;
+      const htmlBgColor = getComputedStyle(document.documentElement).backgroundColor;
+      
+      // Draw background color
+      if (bodyBgColor && bodyBgColor !== 'rgba(0, 0, 0, 0)' && bodyBgColor !== 'transparent') {
+        tempContext.fillStyle = removeTransparency(bodyBgColor);
+        tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      } else if (htmlBgColor && htmlBgColor !== 'rgba(0, 0, 0, 0)' && htmlBgColor !== 'transparent') {
+        tempContext.fillStyle = removeTransparency(htmlBgColor);
+        tempContext.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      }
+      
+      // Render each element to the canvas
+      for (const element of areaElements) {
+        renderElementToCanvas(element, tempContext, cursorX, cursorY, halfCaptureSize, pixelRatio);
+      }
+      
+      // Get the center pixel color
+      const centerX = Math.floor(tempCanvas.width / 2);
+      const centerY = Math.floor(tempCanvas.height / 2);
+      
+      try {
+        // Get pixel data with a small area around the center for better color sampling
+        const pixelData = tempContext.getImageData(
+          centerX - 1, 
+          centerY - 1, 
+          3, 
+          3
+        ).data;
+        
+        // Calculate the average RGB values from the sample area for more accurate color
+        let totalR = 0, totalG = 0, totalB = 0;
+        
+        // Process each pixel in our 3x3 sample
+        for (let i = 0; i < 9; i++) {
+          const pixelIndex = i * 4; // Each pixel has 4 values (r,g,b,a)
+          totalR += pixelData[pixelIndex];
+          totalG += pixelData[pixelIndex + 1];
+          totalB += pixelData[pixelIndex + 2];
+        }
+        
+        // Calculate the average color
+        const avgR = Math.round(totalR / 9);
+        const avgG = Math.round(totalG / 9);
+        const avgB = Math.round(totalB / 9);
+        
+        // Use the average if it's not a grayscale color
+        if (!(avgR === avgG && avgG === avgB)) {
+          currentCenterPixelColor = rgbToHex(avgR, avgG, avgB);
+        } else {
+          // If it's grayscale, try the exact center pixel directly
+          const centerPixel = tempContext.getImageData(centerX, centerY, 1, 1).data;
+          currentCenterPixelColor = rgbToHex(centerPixel[0], centerPixel[1], centerPixel[2]);
+        }
+        
+        // Log the color for debugging
+        console.log('ChromaCode: Center pixel color:', currentCenterPixelColor);
+      } catch (error) {
+        console.error('ChromaCode: Error getting center pixel:', error);
+        // Fall back to element's computed color
+        const centerElement = document.elementFromPoint(cursorX, cursorY);
+        if (centerElement) {
+          const style = getComputedStyle(centerElement);
+          const bgColor = style.backgroundColor;
+          
+          if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+            currentCenterPixelColor = removeTransparency(bgColor);
+          } else if (centerElement.textContent && style.color) {
+            currentCenterPixelColor = removeTransparency(style.color);
+          } else {
+            currentCenterPixelColor = '#808080'; // Neutral gray
+          }
+        }
+      }
+      
+      // Draw to the magnifier
+      if (magnifierContext) {
+        // Clear with white background
+        magnifierContext.fillStyle = '#ffffff';
+        magnifierContext.fillRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+        
+        // Disable image smoothing for a crisp pixelated look
+        magnifierContext.imageSmoothingEnabled = false;
+        
+        // Draw the captured content with zoom
+        magnifierContext.drawImage(
+          tempCanvas, 
+          0, 0, tempCanvas.width, tempCanvas.height,
+          0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE
+        );
+        
+        // Add crosshair
+        drawMagnifierCrosshair(magnifierContext);
+        
+        // Draw color info
+        drawColorInfoInMagnifier(magnifierContext, currentCenterPixelColor);
+      }
+      
+    } catch (error) {
+      console.error('ChromaCode: Error capturing screen content:', error);
+    } finally {
+      // Restore visibility of hidden elements
+      originalVisibility.forEach(({element, style}) => {
+        if (element) element.style.display = style;
+      });
+    }
+  } catch (error: any) {
+    console.error('ChromaCode: Error updating magnifier view:', error);
+  }
+}
+
+// Get element's position in the DOM tree (for z-ordering)
+function getDOMPosition(element: Element): number {
+  let position = 0;
+  let current = element;
+  
+  while (current.previousElementSibling) {
+    position++;
+    current = current.previousElementSibling;
+  }
+  
+  if (current.parentElement && current.parentElement !== document.documentElement) {
+    position += 1000 * getDOMPosition(current.parentElement); // Parent weight
+  }
+  
+  return position;
+}
+
+// Render a specific element to the canvas
+function renderElementToCanvas(
+  element: Element, 
+  context: CanvasRenderingContext2D,
+  cursorX: number, 
+  cursorY: number, 
+  halfCaptureSize: number,
+  pixelRatio: number
+): void {
+  try {
+    const rect = element.getBoundingClientRect();
+    
+    // Convert element position to canvas coordinates
+    const elementX = (rect.left - (cursorX - halfCaptureSize)) * pixelRatio;
+    const elementY = (rect.top - (cursorY - halfCaptureSize)) * pixelRatio;
+    const elementWidth = rect.width * pixelRatio;
+    const elementHeight = rect.height * pixelRatio;
+    
+    // Skip elements too small or outside of our capture area
+    if (elementWidth < 1 || elementHeight < 1 || 
+        elementX + elementWidth < 0 || elementY + elementHeight < 0 ||
+        elementX > context.canvas.width || elementY > context.canvas.height) {
+      return;
+    }
+    
+    const computedStyle = window.getComputedStyle(element);
+    
+    // Handle images with special care - highest priority for accuracy
+    if (element instanceof HTMLImageElement && element.complete) {
+      renderImageElement(element, context, rect, cursorX, cursorY, halfCaptureSize, pixelRatio);
+      return;
+    }
+    
+    // Get element background properties
+    const bgColor = computedStyle.backgroundColor;
+    const hasBgColor = bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent';
+    
+    // Process element background
+    if (hasBgColor) {
+      // Draw the background
+      context.fillStyle = removeTransparency(bgColor);
+      context.fillRect(elementX, elementY, elementWidth, elementHeight);
+    }
+    
+    // Check if element has background image
+    const bgImage = computedStyle.backgroundImage;
+    if (bgImage && bgImage !== 'none') {
+      // Can't directly render background images due to security restrictions,
+      // but we can approximate with better colored patterns
+      try {
+        // If it's a gradient, use colorful approximation
+        if (bgImage.includes('gradient')) {
+          // Try to extract colors from gradient string
+          const colorMatches = bgImage.match(/#[0-9a-f]{3,6}|rgba?\([^)]+\)/gi);
+          
+          if (colorMatches && colorMatches.length > 0) {
+            // Use actual gradient colors if we could extract them
+            const startColor = removeTransparency(colorMatches[0]);
+            let endColor = colorMatches.length > 1 ? 
+              removeTransparency(colorMatches[colorMatches.length-1]) : 
+              startColor;
+              
+            // Create a simple two-color gradient simulation
+            const gradient = context.createLinearGradient(
+              elementX, elementY, 
+              elementX + elementWidth, elementY + elementHeight
+            );
+            gradient.addColorStop(0, startColor);
+            gradient.addColorStop(1, endColor);
+            
+            context.fillStyle = gradient;
+            context.fillRect(elementX, elementY, elementWidth, elementHeight);
+          } else {
+            // Fallback to a colorful pattern if we couldn't extract gradient colors
+            const gradientColors = [
+              '#3498db', '#2ecc71', '#9b59b6', '#e74c3c', '#f1c40f'
+            ];
+            
+            // Draw colorful lines to simulate gradient
+            for (let i = 0; i < elementHeight; i += 4) {
+              const colorIndex = Math.floor((i / elementHeight) * gradientColors.length);
+              context.fillStyle = gradientColors[colorIndex];
+              context.fillRect(elementX, elementY + i, elementWidth, 3);
+            }
+          }
+        } else if (bgImage.includes('url')) {
+          // For image URLs, use a colorful pattern instead of grayscale
+          
+          // First, try to extract image colors if possible
+          let hasExtractedColors = false;
+          
+          // If that fails, use a colorful checkerboard pattern
+          if (!hasExtractedColors) {
+            // Draw a colorful checkerboard pattern to indicate an image
+            const colors = ['#f3e5f5', '#e1bee7', '#ce93d8', '#ba68c8'];
+            const tileSize = 8;
+            
+            for (let i = 0; i < elementWidth; i += tileSize) {
+              for (let j = 0; j < elementHeight; j += tileSize) {
+                const colorIndex = (Math.floor(i / tileSize) + Math.floor(j / tileSize)) % colors.length;
+                context.fillStyle = colors[colorIndex];
+                context.fillRect(elementX + i, elementY + j, tileSize, tileSize);
+              }
+            }
+            
+            // Draw border to indicate this is an image
+            context.strokeStyle = '#9c27b0';
+            context.lineWidth = 1;
+            context.strokeRect(elementX, elementY, elementWidth, elementHeight);
+          }
+        }
+      } catch (e) {
+        console.error('ChromaCode: Error rendering background image:', e);
+      }
+    }
+    
+    // Handle text with improved rendering
+    if (element.textContent && element.textContent.trim() !== '') {
+      renderTextElement(element, context, elementX, elementY, elementWidth, elementHeight, computedStyle);
+    }
+    
+    // Handle borders if present and visible
+    renderElementBorders(element, context, elementX, elementY, elementWidth, elementHeight, computedStyle);
+    
+    // Handle box-shadow if present
+    const boxShadow = computedStyle.boxShadow;
+    if (boxShadow && boxShadow !== 'none') {
+      // Simplify by just drawing a dark outline
+      context.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+      context.lineWidth = 2;
+      context.strokeRect(elementX - 1, elementY - 1, elementWidth + 2, elementHeight + 2);
+    }
+  } catch (error) {
+    console.error('ChromaCode: Error rendering element:', error);
+  }
+}
+
+// Render image elements with high fidelity
+function renderImageElement(
+  imgElement: HTMLImageElement,
+  context: CanvasRenderingContext2D,
+  rect: DOMRect,
+  cursorX: number,
+  cursorY: number,
+  halfCaptureSize: number,
+  pixelRatio: number
+): void {
+  try {
+    // Calculate the visible portion of the image
+    const visibleLeft = Math.max(0, rect.left);
+    const visibleTop = Math.max(0, rect.top);
+    const visibleRight = Math.min(window.innerWidth, rect.right);
+    const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+    
+    // Skip if image is not visible
+    if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+      return;
+    }
+    
+    // Calculate image portion relative to the capture area
+    const canvasX = (visibleLeft - (cursorX - halfCaptureSize)) * pixelRatio;
+    const canvasY = (visibleTop - (cursorY - halfCaptureSize)) * pixelRatio;
+    const canvasWidth = (visibleRight - visibleLeft) * pixelRatio;
+    const canvasHeight = (visibleBottom - visibleTop) * pixelRatio;
+    
+    // Calculate which portion of the original image to use
+    const imgX = (visibleLeft - rect.left) / rect.width * imgElement.naturalWidth;
+    const imgY = (visibleTop - rect.top) / rect.height * imgElement.naturalHeight;
+    const imgWidth = (visibleRight - visibleLeft) / rect.width * imgElement.naturalWidth;
+    const imgHeight = (visibleBottom - visibleTop) / rect.height * imgElement.naturalHeight;
+    
+    // Special handling for SVG images to preserve colors
+    const isSvg = imgElement.src.toLowerCase().endsWith('.svg') || 
+                 imgElement.src.toLowerCase().includes('image/svg');
+    
+    if (isSvg) {
+      // For SVGs, we'll try to preserve colors by using an intermediate canvas
+      try {
+        const svgCanvas = document.createElement('canvas');
+        svgCanvas.width = imgElement.naturalWidth;
+        svgCanvas.height = imgElement.naturalHeight;
+        
+        const svgContext = svgCanvas.getContext('2d', { alpha: false });
+        if (svgContext) {
+          // Use color-preserving rendering
+          svgContext.fillStyle = '#ffffff'; // White background to avoid transparency issues
+          svgContext.fillRect(0, 0, svgCanvas.width, svgCanvas.height);
+          
+          // Draw the SVG with full color
+          svgContext.drawImage(imgElement, 0, 0);
+          
+          // Then draw from our special canvas to the main context
+          context.drawImage(
+            svgCanvas,
+            imgX, imgY, imgWidth, imgHeight,
+            canvasX, canvasY, canvasWidth, canvasHeight
+          );
+          return;
+        }
+      } catch (svgError) {
+        console.error('ChromaCode: Error rendering SVG image:', svgError);
+      }
+    }
+    
+    // For regular images, draw directly
+    // Set image rendering for better quality on scaled images
+    context.imageSmoothingEnabled = false;
+    
+    // Draw the image with its original colors
+    context.drawImage(
+      imgElement,
+      imgX, imgY, imgWidth, imgHeight,
+      canvasX, canvasY, canvasWidth, canvasHeight
+    );
+  } catch (error) {
+    console.error('ChromaCode: Error rendering image:', error);
+  }
+}
+
+// Render text content
+function renderTextElement(
+  element: Element,
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  style: CSSStyleDeclaration
+): void {
+  try {
+    // First, render the background if any
+    const bgColor = style.backgroundColor;
+    if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+      context.fillStyle = removeTransparency(bgColor);
+      context.fillRect(x, y, width, height);
+    }
+    
+    // Get the text color and approximate text position
+    const textColor = style.color || '#000000';
+    
+    // Ensure we're using the actual text color, not a grayscale version
+    // Parse the color and explicitly use the RGB values
+    let finalTextColor = textColor;
+    
+    // If textColor is in RGB/RGBA format, ensure we're using its actual values
+    if (textColor.startsWith('rgb')) {
+      const parts = textColor.match(/[\d.]+/g);
+      if (parts && parts.length >= 3) {
+        const r = parseInt(parts[0], 10);
+        const g = parseInt(parts[1], 10);
+        const b = parseInt(parts[2], 10);
+        
+        // Only convert if it's not grayscale
+        if (!(r === g && g === b)) {
+          finalTextColor = rgbToHex(r, g, b);
+        }
+      }
+    }
+    
+    context.fillStyle = removeTransparency(finalTextColor);
+    
+    // We can't render actual text to the canvas due to security restrictions,
+    // but we can approximate its appearance with blocks
+    const text = element.textContent || '';
+    const textLength = text.length;
+    
+    if (textLength > 0) {
+      // Get font properties
+      const fontSize = parseInt(style.fontSize) || 16;
+      const fontWeight = style.fontWeight; // bold, normal, etc.
+      const isItalic = style.fontStyle === 'italic';
+      const isUnderlined = style.textDecoration.includes('underline');
+      
+      // Scale font for better appearance in magnifier
+      const scaledFontSize = fontSize * 0.8;
+      const lineHeight = parseInt(style.lineHeight) || Math.ceil(fontSize * 1.2);
+      const scaledLineHeight = lineHeight * 0.8;
+      
+      // Get text alignment
+      const textAlign = style.textAlign || 'left';
+      
+      // Initial position
+      let currentX = x + 2; // Small padding
+      let currentY = y + scaledFontSize;
+      
+      // Handle different text alignments
+      if (textAlign === 'center') {
+        currentX = x + (width / 2) - ((textLength * scaledFontSize * 0.5) / 2);
+      } else if (textAlign === 'right') {
+        currentX = x + width - (textLength * scaledFontSize * 0.5) - 2;
+      }
+      
+      // Make line breaks more visible by separating text into paragraphs
+      const paragraphs = text.split(/\n|\r\n/);
+      let yOffset = 0;
+      
+      for (const paragraph of paragraphs) {
+        if (paragraph.trim() === '') {
+          yOffset += scaledLineHeight * 1.5; // Extra space for paragraph breaks
+          continue;
+        }
+        
+        // Handle each paragraph's text
+        let wordsX = currentX;
+        const words = paragraph.split(/\s+/);
+        
+        for (const word of words) {
+          if (word.trim() === '') {
+            wordsX += scaledFontSize * 0.5; // Space between words
+            continue;
+          }
+          
+          // Calculate word width
+          const wordWidth = word.length * scaledFontSize * 0.5;
+          
+          // Check if word needs to wrap to next line
+          if (wordsX + wordWidth > x + width - 2) {
+            wordsX = x + 2; // Reset X position
+            yOffset += scaledLineHeight; // Move to next line
+          }
+          
+          // Draw a more accurate word representation
+          // Adjust height based on font weight (bold = taller)
+          const fontHeightMultiplier = fontWeight === 'bold' || parseInt(fontWeight) >= 600 ? 0.9 : 0.8;
+          const charHeight = scaledFontSize * fontHeightMultiplier;
+          
+          // Draw word as a single rectangle for better performance
+          context.fillRect(
+            wordsX, 
+            currentY + yOffset - charHeight, 
+            wordWidth, 
+            charHeight
+          );
+          
+          // Add underline if needed
+          if (isUnderlined) {
+            context.fillRect(
+              wordsX,
+              currentY + yOffset - charHeight + charHeight + 2,
+              wordWidth,
+              1
+            );
+          }
+          
+          // For italic, add a slant indicator
+          if (isItalic) {
+            context.fillRect(
+              wordsX + wordWidth - 2,
+              currentY + yOffset - charHeight,
+              1,
+              charHeight
+            );
+          }
+          
+          // Move to next word position
+          wordsX += wordWidth + scaledFontSize * 0.3; // Space between words
+        }
+        
+        // Move to next paragraph
+        yOffset += scaledLineHeight * 1.2;
+      }
+    }
+    
+    // Render borders if any
+    renderElementBorders(element, context, x, y, width, height, style);
+  } catch (error) {
+    console.error('ChromaCode: Error rendering text element:', error);
+  }
+}
+
+// Render element borders if present
+function renderElementBorders(
+  element: Element,
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  style: CSSStyleDeclaration
+): void {
+  try {
+    const borderTopWidth = parseInt(style.borderTopWidth) || 0;
+    const borderRightWidth = parseInt(style.borderRightWidth) || 0;
+    const borderBottomWidth = parseInt(style.borderBottomWidth) || 0;
+    const borderLeftWidth = parseInt(style.borderLeftWidth) || 0;
+    
+    if (borderTopWidth > 0) {
+      context.fillStyle = removeTransparency(style.borderTopColor);
+      context.fillRect(x, y, width, borderTopWidth);
+    }
+    
+    if (borderRightWidth > 0) {
+      context.fillStyle = removeTransparency(style.borderRightColor);
+      context.fillRect(x + width - borderRightWidth, y, borderRightWidth, height);
+    }
+    
+    if (borderBottomWidth > 0) {
+      context.fillStyle = removeTransparency(style.borderBottomColor);
+      context.fillRect(x, y + height - borderBottomWidth, width, borderBottomWidth);
+    }
+    
+    if (borderLeftWidth > 0) {
+      context.fillStyle = removeTransparency(style.borderLeftColor);
+      context.fillRect(x, y, borderLeftWidth, height);
+    }
+  } catch (error) {
+    console.error('ChromaCode: Error rendering borders:', error);
+  }
+}
+
+// Draw the crosshair in the magnifier
+function drawMagnifierCrosshair(context: CanvasRenderingContext2D): void {
+  // Draw the crosshair
+  context.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+  context.lineWidth = 1;
+  
+  // Horizontal line
+  context.beginPath();
+  context.moveTo(0, MAGNIFIER_SIZE / 2);
+  context.lineTo(MAGNIFIER_SIZE, MAGNIFIER_SIZE / 2);
+  context.stroke();
+  
+  // Vertical line
+  context.beginPath();
+  context.moveTo(MAGNIFIER_SIZE / 2, 0);
+  context.lineTo(MAGNIFIER_SIZE / 2, MAGNIFIER_SIZE);
+  context.stroke();
+  
+  // Draw crosshair in white for visibility
+  context.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+  context.lineWidth = 1;
+  
+  // Horizontal line
+  context.beginPath();
+  context.moveTo(0, MAGNIFIER_SIZE / 2 + 1);
+  context.lineTo(MAGNIFIER_SIZE, MAGNIFIER_SIZE / 2 + 1);
+  context.stroke();
+  
+  // Vertical line
+  context.beginPath();
+  context.moveTo(MAGNIFIER_SIZE / 2 + 1, 0);
+  context.lineTo(MAGNIFIER_SIZE / 2 + 1, MAGNIFIER_SIZE);
+  context.stroke();
+}
+
+// Draw color information in the magnifier
+function drawColorInfoInMagnifier(context: CanvasRenderingContext2D, color: string): void {
+  // Draw semi-transparent background for the info area
+  const infoAreaHeight = 44; // Increased height for more info
+  context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  context.fillRect(0, MAGNIFIER_SIZE - infoAreaHeight, MAGNIFIER_SIZE, infoAreaHeight);
+  
+  // Draw color swatch
+  const swatchSize = 24; // Larger swatch
+  const swatchY = MAGNIFIER_SIZE - swatchSize - 10;
+  const swatchX = 8;
+  
+  // Draw color swatch with the center color
+  context.fillStyle = color;
+  context.fillRect(swatchX, swatchY, swatchSize, swatchSize);
+  
+  // Swatch border
+  context.strokeStyle = '#ffffff';
+  context.lineWidth = 1;
+  context.strokeRect(swatchX, swatchY, swatchSize, swatchSize);
+  
+  // Calculate contrasting text color for better visibility
+  const contrastColor = getContrastColor(color);
+  
+  // Add small indicator inside the swatch with contrast color
+  context.fillStyle = contrastColor;
+  context.fillRect(swatchX + swatchSize - 8, swatchY + swatchSize - 8, 6, 6);
+  
+  // Convert to RGB for display
+  const rgbColor = hexToRgbString(color);
+  
+  // Draw the color info text
+  context.font = 'bold 14px system-ui, -apple-system, sans-serif';
+  context.fillStyle = '#ffffff';
+  context.textAlign = 'left';
+  
+  // Draw HEX value
+  context.fillText(color.toUpperCase(), swatchX + swatchSize + 8, swatchY + 14);
+  
+  // Draw RGB value in smaller font
+  context.font = '12px system-ui, -apple-system, sans-serif';
+  context.fillText(rgbColor, swatchX + swatchSize + 8, swatchY + 30);
+}
+
+// Convert hex color to RGB string for display
+function hexToRgbString(hex: string): string {
+  // Remove the # if present
+  hex = hex.replace('#', '');
+  
+  // Handle short hex format (e.g. #FFF)
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  
+  // Parse the hex values
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);
