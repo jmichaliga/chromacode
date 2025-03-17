@@ -15,7 +15,7 @@ const toast = document.getElementById('toast') as HTMLDivElement | null;
 
 // Color history
 let colorHistoryArray: string[] = [];
-const MAX_HISTORY_ITEMS = 10;
+const MAX_HISTORY_ITEMS = 20;
 
 // Check if the EyeDropper API is available
 const isEyeDropperSupported = (): boolean => {
@@ -32,9 +32,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set up event listeners
   setupEventListeners();
   
-  // Show a message if the browser doesn't support the EyeDropper API
+  // Show an error message if the browser doesn't support the EyeDropper API
   if (!isEyeDropperSupported()) {
-    showToast('Using legacy color picker - consider updating your browser for a better experience');
+    showToast('Error: EyeDropper API not supported in this browser. Please use Chrome 95+, Edge 95+, or Firefox 98+.', 5000);
+    // Disable the color picker button
+    if (colorPickerBtn) {
+      colorPickerBtn.disabled = true;
+      colorPickerBtn.title = 'EyeDropper API not supported in this browser';
+      colorPickerBtn.classList.add('disabled');
+    }
   }
 });
 
@@ -295,18 +301,18 @@ function copyToClipboard(text: string, description: string): void {
 /**
  * Show a toast message
  */
-function showToast(message: string): void {
+function showToast(message: string, duration: number = 2000): void {
   if (!toast) return;
   
   toast.textContent = message;
   toast.style.opacity = '1';
   
-  // Hide after 2 seconds
+  // Hide after specified duration
   setTimeout(() => {
     if (toast) {
       toast.style.opacity = '0';
     }
-  }, 2000);
+  }, duration);
 }
 
 // Define Tailwind CSS colors

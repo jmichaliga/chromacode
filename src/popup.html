@@ -247,20 +247,26 @@
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
+            margin-bottom: 30px;
+            justify-content: flex-start;
+            width: 100%;
         }
         
         .color-item {
-            width: 25px;
-            height: 25px;
+            width: 22px;
+            height: 22px;
             cursor: pointer;
             border: 1px solid var(--primary-color);
             transition: all 0.2s;
             position: relative;
+            flex: 0 0 auto;
+            margin-bottom: 6px;
         }
         
         .color-item:hover {
             transform: scale(1.1);
             box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+            z-index: 1;
         }
         
         .color-item::before {
@@ -318,6 +324,46 @@
             background-color: rgba(255, 0, 255, 0.1);
             box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
         }
+
+    #credits {
+        font-size: 10px;
+        color: var(--secondary-color);
+        position: relative;
+        bottom: auto;
+        left: auto;
+        text-align: right;
+        text-decoration: none;
+    }
+
+    #credits a {
+        color: var(--primary-color);
+        text-decoration: underline;
+    }
+    
+    #credits a:hover {
+        color: var(--secondary-color);
+        border-bottom: 1px solid var(--secondary-color);
+        text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+    }
+    
+    #colorPickerBtn.disabled {
+        background-color: rgba(150, 150, 150, 0.2);
+        color: rgba(0, 255, 255, 0.3);
+        cursor: not-allowed;
+        border-color: rgba(0, 255, 255, 0.2);
+        position: relative;
+    }
+    
+    #colorPickerBtn.disabled::after {
+        content: "✕";
+        color: rgba(255, 0, 0, 0.5);
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 12px;
+    }
+    
     </style>
 </head>
 <body>
@@ -350,6 +396,7 @@
             <button id="clearHistoryBtn">Clear</button>
         </div>
         <div id="colorHistory"></div>
+        <p id="credits">Created by <a href="https://smartnode.co" target="_blank">SmartNode</a></p>
     </div>
     
     <div id="toast"></div>
