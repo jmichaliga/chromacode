@@ -13,7 +13,6 @@ let throttleDelay: number = 30; // ms - controls how often we process mouse move
 let lastUpdateTime: number = 0;
 const ZOOM_FACTOR: number = 6; // Magnification level
 const MAGNIFIER_PIXEL_SIZE: number = 6; // Size of each "pixel" in the magnifier
-let standaloneInfoBox: HTMLElement | null = null; // New standalone color info box
 
 // Check if the EyeDropper API is available
 const hasEyeDropperAPI = (): boolean => {
@@ -84,20 +83,11 @@ async function startNativeEyeDropper(): Promise<void> {
   try {
     console.log('ChromaCode: Using native EyeDropper API');
     
-    // Create a preview/helper element that will show while moving the cursor
-    createStandaloneInfoBox();
-    
-    // Setup event listeners for live preview before starting EyeDropper
-    setupLivePreviewListeners(true);
-    
     // Create a new EyeDropper instance
     const eyeDropper = new (window.EyeDropper as EyeDropperConstructor)();
     
     // Open the eyedropper - this will show the native UI
     const result = await eyeDropper.open();
-    
-    // Clean up our preview once the EyeDropper returns a result
-    removeStandaloneInfoBox();
     
     // Get the selected color
     const selectedColor = result.sRGBHex;
@@ -115,221 +105,12 @@ async function startNativeEyeDropper(): Promise<void> {
       }
     });
   } catch (error) {
-    // Clean up our preview elements
-    removeStandaloneInfoBox();
-    
     // The user likely canceled the eyedropper or it failed
     console.error('ChromaCode: Native EyeDropper error:', error);
     
     // Forward the error
     throw error;
   }
-}
-
-// Setup live preview event listeners
-function setupLivePreviewListeners(isNative: boolean): void {
-  document.addEventListener('mousemove', handlePreviewMouseMove);
-  
-  // Also stop preview when eye dropper is active or on key press
-  if (isNative) {
-    document.addEventListener('keydown', removeStandaloneInfoBox);
-    document.addEventListener('mousedown', removeStandaloneInfoBox);
-  }
-}
-
-// Handle mouse movement for the standalone preview
-function handlePreviewMouseMove(e: MouseEvent): void {
-  if (!standaloneInfoBox) return;
-  
-  // Get mouse position
-  const mouseX = e.clientX;
-  const mouseY = e.clientY;
-  
-  // Throttle updates for better performance
-  const now = Date.now();
-  if (now - lastUpdateTime < throttleDelay) return;
-  lastUpdateTime = now;
-  
-  // Position the info box near the cursor but not directly under it
-  positionStandaloneInfoBox(mouseX, mouseY);
-  
-  // Get the element under the cursor
-  const element = document.elementFromPoint(mouseX, mouseY);
-  if (!element) return;
-  
-  // Sample the color at the cursor position
-  const sampledColor = getColorAtPoint(mouseX, mouseY, element);
-  
-  // Update the info box with the sampled color
-  updateStandaloneInfoBox(sampledColor);
-}
-
-// Create standalone color info box
-function createStandaloneInfoBox(): void {
-  // Remove any existing info box
-  removeStandaloneInfoBox();
-  
-  // Create the info box
-  standaloneInfoBox = document.createElement('div');
-  standaloneInfoBox.className = 'standalone-color-info';
-  standaloneInfoBox.style.cssText = `
-    position: fixed;
-    z-index: 2147483646;
-    background: rgba(10, 12, 20, 0.85);
-    color: #00FFFF;
-    border-radius: 2px;
-    padding: 8px 12px;
-    font-family: 'Courier New', monospace;
-    font-size: 14px;
-    box-shadow: 0 0 10px rgba(0, 255, 255, 0.4), 0 0 20px rgba(255, 0, 255, 0.2);
-    pointer-events: none;
-    display: flex;
-    align-items: center;
-    border: 1px solid #00FFFF;
-    max-width: 200px;
-    backdrop-filter: blur(4px);
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-  `;
-  
-  // Create the color swatch
-  const swatch = document.createElement('div');
-  swatch.className = 'color-swatch';
-  swatch.style.cssText = `
-    width: 24px;
-    height: 24px;
-    border-radius: 0;
-    border: 1px solid #00FFFF;
-    margin-right: 10px;
-    background-color: #ffffff;
-    box-shadow: inset 0 0 2px rgba(0, 255, 255, 0.5);
-    position: relative;
-  `;
-  
-  // Add scan lines to swatch for cyberpunk effect
-  const scanlines = document.createElement('div');
-  scanlines.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      rgba(0, 0, 0, 0.15),
-      rgba(0, 0, 0, 0.15) 1px,
-      transparent 1px,
-      transparent 2px
-    );
-    pointer-events: none;
-  `;
-  swatch.appendChild(scanlines);
-  
-  // Create info container
-  const info = document.createElement('div');
-  info.className = 'color-info-text';
-  info.style.cssText = `
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  `;
-  
-  // HEX value
-  const hexInfo = document.createElement('div');
-  hexInfo.className = 'color-hex';
-  hexInfo.style.cssText = `
-    font-weight: bold;
-    letter-spacing: 1px;
-    text-shadow: 0 0 5px rgba(0, 255, 255, 0.7);
-  `;
-  
-  // RGB value
-  const rgbInfo = document.createElement('div');
-  rgbInfo.className = 'color-rgb';
-  rgbInfo.style.cssText = `
-    font-size: 11px;
-    opacity: 0.9;
-    color: #FF00FF;
-    letter-spacing: 0.5px;
-  `;
-  
-  // Add all elements to the DOM
-  info.appendChild(hexInfo);
-  info.appendChild(rgbInfo);
-  standaloneInfoBox.appendChild(swatch);
-  standaloneInfoBox.appendChild(info);
-  document.body.appendChild(standaloneInfoBox);
-  
-  // Initial position offscreen until we have a mouse position
-  standaloneInfoBox.style.left = '-9999px';
-  standaloneInfoBox.style.top = '-9999px';
-}
-
-// Position the standalone info box
-function positionStandaloneInfoBox(x: number, y: number): void {
-  if (!standaloneInfoBox) return;
-  
-  // Position the info box offset from cursor to prevent obscuring content
-  let posX = x + 20;
-  let posY = y + 20;
-  
-  // Check if we're near the right edge of the screen
-  if (posX + 200 > window.innerWidth) {
-    posX = x - 220; // Position on the left side of cursor
-  }
-  
-  // Check if we're near the bottom edge of the screen
-  if (posY + 80 > window.innerHeight) {
-    posY = y - 80; // Position above cursor
-  }
-  
-  standaloneInfoBox.style.left = `${posX}px`;
-  standaloneInfoBox.style.top = `${posY}px`;
-}
-
-// Update the standalone info box with color information
-function updateStandaloneInfoBox(color: string): void {
-  if (!standaloneInfoBox) return;
-  
-  const swatch = standaloneInfoBox.querySelector('.color-swatch') as HTMLElement;
-  const hexInfo = standaloneInfoBox.querySelector('.color-hex') as HTMLElement;
-  const rgbInfo = standaloneInfoBox.querySelector('.color-rgb') as HTMLElement;
-  
-  if (swatch && hexInfo && rgbInfo) {
-    swatch.style.backgroundColor = color;
-    hexInfo.textContent = color.toUpperCase();
-    rgbInfo.textContent = hexToRgbString(color);
-    
-    // Set border glow based on the color
-    swatch.style.boxShadow = `inset 0 0 2px rgba(0, 255, 255, 0.5), 0 0 5px ${color}`;
-    
-    // Set text color based on background for better contrast
-    const contrastColor = getContrastColor(color);
-    hexInfo.style.color = contrastColor === '#ffffff' ? '#00FFFF' : '#FF00FF';
-    
-    // Cyberpunk blinking effect on color change
-    standaloneInfoBox.style.transition = 'none';
-    standaloneInfoBox.style.opacity = '0.8';
-    setTimeout(() => {
-      if (standaloneInfoBox) {
-        standaloneInfoBox.style.transition = 'opacity 0.2s';
-        standaloneInfoBox.style.opacity = '1';
-      }
-    }, 50);
-  }
-}
-
-// Remove the standalone info box
-function removeStandaloneInfoBox(): void {
-  if (standaloneInfoBox && standaloneInfoBox.parentNode) {
-    standaloneInfoBox.parentNode.removeChild(standaloneInfoBox);
-    standaloneInfoBox = null;
-  }
-  
-  // Remove event listeners
-  document.removeEventListener('mousemove', handlePreviewMouseMove);
-  document.removeEventListener('keydown', removeStandaloneInfoBox);
-  document.removeEventListener('mousedown', removeStandaloneInfoBox);
 }
 
 // Start the custom color picker (fallback for browsers without EyeDropper API)
@@ -353,49 +134,12 @@ function contentPickerStart(): void {
     pickerOverlay.style.width = '100%';
     pickerOverlay.style.height = '100%';
     pickerOverlay.style.zIndex = '2147483647'; // Highest possible z-index
-    pickerOverlay.style.cursor = 'none'; // Hide default cursor
+    pickerOverlay.style.cursor = 'crosshair';
     pickerOverlay.style.backgroundColor = 'transparent';
     
-    // Create a custom cursor for better precision with cyberpunk style
+    // Create a custom cursor for better precision
     pickerCursor = document.createElement('div');
     pickerCursor.className = 'picker-cursor';
-    pickerCursor.style.cssText = `
-      position: fixed;
-      width: 20px;
-      height: 20px;
-      transform: translate(-10px, -10px);
-      border: 1px solid #00FFFF;
-      box-shadow: 0 0 5px rgba(0, 255, 255, 0.7);
-      pointer-events: none;
-      z-index: 2147483647;
-      display: none;
-    `;
-    
-    // Add inner crosshair to cursor
-    const innerCrosshair = document.createElement('div');
-    innerCrosshair.style.cssText = `
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 8px;
-      height: 8px;
-      transform: translate(-50%, -50%);
-      border: 1px solid #FF00FF;
-    `;
-    pickerCursor.appendChild(innerCrosshair);
-    
-    // Add center dot to cursor
-    const centerDot = document.createElement('div');
-    centerDot.style.cssText = `
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 2px;
-      height: 2px;
-      transform: translate(-50%, -50%);
-      background-color: #FF00FF;
-    `;
-    pickerCursor.appendChild(centerDot);
     
     // Create color info box
     colorInfoBox = document.createElement('div');
@@ -403,9 +147,6 @@ function contentPickerStart(): void {
     
     // Create magnifying glass
     magnifierGlass = createMagnifier();
-    
-    // Create standalone info box for better visibility
-    createStandaloneInfoBox();
     
     // Add elements to the page
     document.body.appendChild(pickerOverlay);
@@ -479,9 +220,6 @@ function stopColorPicker(): void {
       magnifierGlass.remove();
     }
     
-    // Remove standalone info box
-    removeStandaloneInfoBox();
-    
     // Remove event listeners
     document.removeEventListener('keydown', handleKeyDown, { capture: true });
     
@@ -554,15 +292,6 @@ function handleMouseMove(e: MouseEvent): void {
       
       // Update magnifier view
       updateMagnifierView(mouseX, mouseY);
-    }
-    
-    // Update the standalone info box
-    if (standaloneInfoBox) {
-      // Position the info box
-      positionStandaloneInfoBox(mouseX, mouseY);
-      
-      // Update with the current center pixel color
-      updateStandaloneInfoBox(currentCenterPixelColor);
     }
   } catch (error: any) {
     console.error('ChromaCode: Error tracking mouse:', error);
@@ -1122,19 +851,7 @@ function createMagnifier(): HTMLElement {
     const magnifier = document.createElement('div');
     magnifier.id = 'magnifier-glass';
     magnifier.className = 'magnifier-glass';
-    magnifier.style.cssText = `
-      pointer-events: none;
-      position: fixed;
-      z-index: 2147483647;
-      border-radius: 0;
-      box-shadow: 0 0 0 1px #00FFFF, 0 0 10px rgba(0, 255, 255, 0.5);
-      overflow: hidden;
-      width: 150px;
-      height: 150px;
-      display: none;
-      background-color: rgba(10, 12, 20, 0.15);
-      border: 1px solid #00FFFF;
-    `;
+    magnifier.style.cssText = 'pointer-events: none; position: fixed; z-index: 2147483647; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.3); overflow: hidden; width: 150px; height: 150px; display: none;';
     
     // Create canvas for the magnification
     magnifierCanvas = document.createElement('canvas');
@@ -1150,68 +867,10 @@ function createMagnifier(): HTMLElement {
     }
     
     // Initial fill
-    magnifierContext.fillStyle = '#0a0c14';
+    magnifierContext.fillStyle = '#ffffff';
     magnifierContext.fillRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
     
-    // Create scanlines overlay for cyberpunk effect
-    const scanlines = document.createElement('div');
-    scanlines.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      pointer-events: none;
-      background: repeating-linear-gradient(
-        0deg,
-        rgba(0, 0, 0, 0.1),
-        rgba(0, 0, 0, 0.1) 1px,
-        transparent 1px,
-        transparent 2px
-      );
-      z-index: 1;
-    `;
-    
-    // Create grid overlay for cyberpunk effect
-    const grid = document.createElement('div');
-    grid.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      pointer-events: none;
-      background-image: 
-        linear-gradient(rgba(0, 255, 255, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 255, 255, 0.05) 1px, transparent 1px);
-      background-size: ${MAGNIFIER_PIXEL_SIZE * 2}px ${MAGNIFIER_PIXEL_SIZE * 2}px;
-      z-index: 2;
-    `;
-    
-    // Add corner decorations
-    const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
-    corners.forEach(corner => {
-      const cornerElem = document.createElement('div');
-      const [vPos, hPos] = corner.split('-');
-      
-      cornerElem.style.cssText = `
-        position: absolute;
-        width: 10px;
-        height: 10px;
-        border-${vPos}: 2px solid #00FFFF;
-        border-${hPos}: 2px solid #00FFFF;
-        ${vPos}: 0;
-        ${hPos}: 0;
-        z-index: 3;
-      `;
-      
-      magnifier.appendChild(cornerElem);
-    });
-    
     magnifier.appendChild(magnifierCanvas);
-    magnifier.appendChild(scanlines);
-    magnifier.appendChild(grid);
-    
     return magnifier;
   } catch (error) {
     console.error('ChromaCode: Error creating magnifier:', error);
@@ -1860,10 +1519,8 @@ function renderElementBorders(
 
 // Draw the crosshair in the magnifier
 function drawMagnifierCrosshair(context: CanvasRenderingContext2D): void {
-  // Draw neon cyberpunk crosshair
-  
-  // Main crosshair lines
-  context.strokeStyle = 'rgba(0, 255, 255, 0.9)';
+  // Draw the crosshair
+  context.strokeStyle = 'rgba(0, 0, 0, 0.6)';
   context.lineWidth = 1;
   
   // Horizontal line
@@ -1878,64 +1535,20 @@ function drawMagnifierCrosshair(context: CanvasRenderingContext2D): void {
   context.lineTo(MAGNIFIER_SIZE / 2, MAGNIFIER_SIZE);
   context.stroke();
   
-  // Draw neon glow effect
-  context.strokeStyle = 'rgba(0, 255, 255, 0.4)';
-  context.lineWidth = 2;
-  
-  // Horizontal glow
-  context.beginPath();
-  context.moveTo(0, MAGNIFIER_SIZE / 2);
-  context.lineTo(MAGNIFIER_SIZE, MAGNIFIER_SIZE / 2);
-  context.stroke();
-  
-  // Vertical glow
-  context.beginPath();
-  context.moveTo(MAGNIFIER_SIZE / 2, 0);
-  context.lineTo(MAGNIFIER_SIZE / 2, MAGNIFIER_SIZE);
-  context.stroke();
-  
-  // Add center point
-  const centerSize = 3;
-  context.fillStyle = '#FF00FF';
-  context.fillRect(
-    MAGNIFIER_SIZE / 2 - centerSize / 2,
-    MAGNIFIER_SIZE / 2 - centerSize / 2,
-    centerSize,
-    centerSize
-  );
-  
-  // Add corner brackets for cyberpunk targeting effect
-  const bracketLength = 10;
-  const bracketOffset = 5;
-  context.strokeStyle = '#FF00FF';
+  // Draw crosshair in white for visibility
+  context.strokeStyle = 'rgba(255, 255, 255, 0.6)';
   context.lineWidth = 1;
   
-  // Top-left bracket
+  // Horizontal line
   context.beginPath();
-  context.moveTo(bracketOffset, bracketOffset + bracketLength);
-  context.lineTo(bracketOffset, bracketOffset);
-  context.lineTo(bracketOffset + bracketLength, bracketOffset);
+  context.moveTo(0, MAGNIFIER_SIZE / 2 + 1);
+  context.lineTo(MAGNIFIER_SIZE, MAGNIFIER_SIZE / 2 + 1);
   context.stroke();
   
-  // Top-right bracket
+  // Vertical line
   context.beginPath();
-  context.moveTo(MAGNIFIER_SIZE - bracketOffset - bracketLength, bracketOffset);
-  context.lineTo(MAGNIFIER_SIZE - bracketOffset, bracketOffset);
-  context.lineTo(MAGNIFIER_SIZE - bracketOffset, bracketOffset + bracketLength);
-  context.stroke();
-  
-  // Bottom-left bracket
-  context.beginPath();
-  context.moveTo(bracketOffset, MAGNIFIER_SIZE - bracketOffset - bracketLength);
-  context.lineTo(bracketOffset, MAGNIFIER_SIZE - bracketOffset);
-  context.lineTo(bracketOffset + bracketLength, MAGNIFIER_SIZE - bracketOffset);
-  context.stroke();
-  
-  // Bottom-right bracket
-  context.beginPath();
-  context.moveTo(MAGNIFIER_SIZE - bracketOffset - bracketLength, MAGNIFIER_SIZE - bracketOffset);
-  context.lineTo(MAGNIFIER_SIZE - bracketOffset, MAGNIFIER_SIZE - bracketOffset);
-  context.lineTo(MAGNIFIER_SIZE - bracketOffset, MAGNIFIER_SIZE - bracketOffset - bracketLength);
+  context.moveTo(MAGNIFIER_SIZE / 2 + 1, 0);
+  context.lineTo(MAGNIFIER_SIZE / 2 + 1, MAGNIFIER_SIZE);
   context.stroke();
 }
 
@@ -1943,106 +1556,44 @@ function drawMagnifierCrosshair(context: CanvasRenderingContext2D): void {
 function drawColorInfoInMagnifier(context: CanvasRenderingContext2D, color: string): void {
   // Draw semi-transparent background for the info area
   const infoAreaHeight = 44; // Increased height for more info
-  context.fillStyle = 'rgba(10, 12, 20, 0.9)';
+  context.fillStyle = 'rgba(0, 0, 0, 0.7)';
   context.fillRect(0, MAGNIFIER_SIZE - infoAreaHeight, MAGNIFIER_SIZE, infoAreaHeight);
-  
-  // Draw cyberpunk-style border for info area
-  context.strokeStyle = '#00FFFF';
-  context.lineWidth = 1;
-  context.strokeRect(0, MAGNIFIER_SIZE - infoAreaHeight, MAGNIFIER_SIZE, infoAreaHeight);
-  
-  // Draw horizontal line accents
-  context.strokeStyle = 'rgba(0, 255, 255, 0.5)';
-  context.beginPath();
-  context.moveTo(0, MAGNIFIER_SIZE - infoAreaHeight + 1);
-  context.lineTo(MAGNIFIER_SIZE, MAGNIFIER_SIZE - infoAreaHeight + 1);
-  context.stroke();
   
   // Draw color swatch
   const swatchSize = 24; // Larger swatch
   const swatchY = MAGNIFIER_SIZE - swatchSize - 10;
   const swatchX = 8;
   
-  // Draw a grid behind the swatch
-  const gridSize = 4;
-  for (let i = 0; i < swatchSize; i += gridSize) {
-    for (let j = 0; j < swatchSize; j += gridSize) {
-      context.fillStyle = (i + j) % (gridSize * 2) === 0 ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.2)';
-      context.fillRect(swatchX + i, swatchY + j, gridSize, gridSize);
-    }
-  }
-  
   // Draw color swatch with the center color
   context.fillStyle = color;
   context.fillRect(swatchX, swatchY, swatchSize, swatchSize);
   
-  // Swatch border with cyberpunk style
-  context.strokeStyle = '#00FFFF';
+  // Swatch border
+  context.strokeStyle = '#ffffff';
   context.lineWidth = 1;
   context.strokeRect(swatchX, swatchY, swatchSize, swatchSize);
   
-  // Add corner accents to swatch
-  context.strokeStyle = '#FF00FF';
-  context.lineWidth = 1;
+  // Calculate contrasting text color for better visibility
+  const contrastColor = getContrastColor(color);
   
-  // Top-left corner
-  context.beginPath();
-  context.moveTo(swatchX, swatchY + 5);
-  context.lineTo(swatchX, swatchY);
-  context.lineTo(swatchX + 5, swatchY);
-  context.stroke();
-  
-  // Bottom-right corner
-  context.beginPath();
-  context.moveTo(swatchX + swatchSize - 5, swatchY + swatchSize);
-  context.lineTo(swatchX + swatchSize, swatchY + swatchSize);
-  context.lineTo(swatchX + swatchSize, swatchY + swatchSize - 5);
-  context.stroke();
-  
-  // Add scanlines effect over the swatch
-  for (let i = 0; i < swatchSize; i += 2) {
-    context.fillStyle = 'rgba(0, 0, 0, 0.1)';
-    context.fillRect(swatchX, swatchY + i, swatchSize, 1);
-  }
+  // Add small indicator inside the swatch with contrast color
+  context.fillStyle = contrastColor;
+  context.fillRect(swatchX + swatchSize - 8, swatchY + swatchSize - 8, 6, 6);
   
   // Convert to RGB for display
   const rgbColor = hexToRgbString(color);
   
-  // Draw the color info text with cyberpunk style
-  context.font = 'bold 14px "Courier New", monospace';
-  context.fillStyle = '#00FFFF';
+  // Draw the color info text
+  context.font = 'bold 14px system-ui, -apple-system, sans-serif';
+  context.fillStyle = '#ffffff';
   context.textAlign = 'left';
   
-  // Draw HEX value with glow effect
-  const hexValue = color.toUpperCase();
+  // Draw HEX value
+  context.fillText(color.toUpperCase(), swatchX + swatchSize + 8, swatchY + 14);
   
-  // Draw text shadow/glow
-  context.fillStyle = 'rgba(0, 255, 255, 0.3)';
-  context.fillText(hexValue, swatchX + swatchSize + 9, swatchY + 14);
-  context.fillText(hexValue, swatchX + swatchSize + 7, swatchY + 14);
-  
-  // Main text
-  context.fillStyle = '#00FFFF';
-  context.fillText(hexValue, swatchX + swatchSize + 8, swatchY + 14);
-  
-  // Draw RGB value in smaller font with different color
-  context.font = '12px "Courier New", monospace';
-  context.fillStyle = '#FF00FF';
+  // Draw RGB value in smaller font
+  context.font = '12px system-ui, -apple-system, sans-serif';
   context.fillText(rgbColor, swatchX + swatchSize + 8, swatchY + 30);
-  
-  // Draw a small decorative element - horizontal line with break
-  context.strokeStyle = '#00FFFF';
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(swatchX + swatchSize + 8, swatchY + 18);
-  context.lineTo(swatchX + swatchSize + 30, swatchY + 18);
-  context.stroke();
-  
-  context.strokeStyle = '#FF00FF';
-  context.beginPath();
-  context.moveTo(swatchX + swatchSize + 35, swatchY + 18);
-  context.lineTo(swatchX + swatchSize + 70, swatchY + 18);
-  context.stroke();
 }
 
 // Convert hex color to RGB string for display
