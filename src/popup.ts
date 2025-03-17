@@ -16,7 +16,7 @@ const toast = document.getElementById('toast') as HTMLDivElement | null;
 
 // Color history
 let colorHistoryArray: string[] = [];
-const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_ITEMS = 5;
 
 // Check if the EyeDropper API is available
 const isEyeDropperSupported = (): boolean => {
@@ -50,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
  */
 function loadColorFromStorage(): void {
   chrome.storage.local.get(['lastPickedColor', 'colorHistory'], (result) => {
+
+    console.log('color storage>', result);
     // Set last picked color
     if (result.lastPickedColor) {
       updateColorDisplay(result.lastPickedColor);

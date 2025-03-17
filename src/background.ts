@@ -62,20 +62,6 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "pick-color",
-    title: "Pick Color",
-    contexts: ["page", "image"],
-  });
-});
-
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "pick-color" && tab && tab.id) {
-    backgroundStartColorPicker(tab);
-  }
-});
-
 function backgroundStartColorPicker(tab: chrome.tabs.Tab): void {
   if (!tab.id) {
     console.error("ChromaCode: Tab has no ID");
