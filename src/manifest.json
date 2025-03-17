@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ChromaCode1",
+  "name": "ChromaCode",
   "version": "1.0.1",
   "description": "A color picker extension for extracting colors from web pages",
   "permissions": [
