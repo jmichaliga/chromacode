@@ -75,27 +75,13 @@ chrome.runtime.onMessage.addListener((
     
     eyeDropper.open()
       .then(result => {
-        // Get the selected color
         const selectedColor = result.sRGBHex;
+        console.log('result>', result);
         console.log('ChromaCode: Color picked with native EyeDropper:', selectedColor);
-        
-        // Send the selected color to the background script
+
         chrome.runtime.sendMessage({
           action: 'colorPicked',
           color: selectedColor
-        }, response => {
-          isPickerActive = false;
-          
-          if (chrome.runtime.lastError) {
-            console.error('ChromaCode: Error sending color to background:', chrome.runtime.lastError);
-            sendResponse({ 
-              success: false, 
-              error: 'Error sending color to background' 
-            });
-          } else {
-            console.log('ChromaCode: Background response:', response);
-            sendResponse({ success: true });
-          }
         });
       })
       .catch(error => {
@@ -120,4 +106,4 @@ chrome.runtime.onMessage.addListener((
     // Return true to indicate we want to send a response asynchronously
     return true;
   }
-}); 
+});

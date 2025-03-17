@@ -315,6 +315,34 @@
         box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
       }
 
+      #dismissBtn {
+        display: block;
+        width: 20px;
+        height: 20px;
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        padding: 8px;
+        background-color: transparent;
+        color: var(--secondary-color);
+        border: 1px solid var(--secondary-color);
+        margin: 0;
+        cursor: pointer;
+        font-size: 14px;
+        font-family: "Share Tech Mono", "Courier New", monospace;
+        text-transform: uppercase;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+      }
+
+      #dismissBtn:hover {
+        opacity: 1;
+        text-shadow: 0 0 5px var(--secondary-color);
+      }
+
       #credits {
         font-size: 10px;
         color: var(--secondary-color);
@@ -360,6 +388,8 @@
   </head>
   <body>
     <h1>ChromaCode</h1>
+
+    <button id="dismissBtn">&times;</button>
 
     <div id="currentColor"></div>
 

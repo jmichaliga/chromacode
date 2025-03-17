@@ -11,6 +11,7 @@ const rgbValue = document.getElementById('rgbValue') as HTMLInputElement | null;
 const tailwindValue = document.getElementById('tailwindValue') as HTMLInputElement | null;
 const colorHistory = document.getElementById('colorHistory') as HTMLDivElement | null;
 const clearHistoryBtn = document.getElementById('clearHistoryBtn') as HTMLButtonElement | null;
+const dismissBtn = document.getElementById('dismissBtn') as HTMLButtonElement | null;
 const toast = document.getElementById('toast') as HTMLDivElement | null;
 
 // Color history
@@ -87,6 +88,12 @@ function setupEventListeners(): void {
   
   if (tailwindValue) {
     tailwindValue.addEventListener('click', () => copyToClipboard(tailwindValue.value, 'Tailwind color'));
+  }
+
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      window.close();
+    });
   }
 }
 
