@@ -11,7 +11,6 @@ chrome.runtime.onMessage.addListener(
     sender: chrome.runtime.MessageSender,
     sendResponse: (response: any) => void
   ) => {
-    console.log("ChromaCode: Background received message:", message);
 
     switch (message.action) {
       case "colorPicked":
@@ -27,10 +26,6 @@ chrome.runtime.onMessage.addListener(
           if (colorHistory.length > MAX_COLOR_HISTORY) {
             colorHistory = colorHistory.slice(0, MAX_COLOR_HISTORY);
           }
-
-          console.log('result>', result);
-          console.log('storage>', chrome.storage.local);
-          console.log('colorHistory>', colorHistory);
 
           chrome.storage.local.set({ lastPickedColor: color }, () => {
             chrome.action.openPopup();
@@ -64,26 +59,19 @@ chrome.runtime.onMessage.addListener(
 
 function backgroundStartColorPicker(tab: chrome.tabs.Tab): void {
   if (!tab.id) {
-    console.error("ChromaCode: Tab has no ID");
     return;
   }
 
   chrome.tabs.sendMessage(tab.id, { action: "pickColor" }, (response) => {
     if (chrome.runtime.lastError || !response || !response.success) {
-      console.log(
-        "ChromaCode: Content script not responding, injecting it manually"
-      );
       injectContentScript(tab);
-    } else {
-      console.log("ChromaCode: Color picker started successfully");
     }
   });
 }
 
 function injectContentScript(tab: chrome.tabs.Tab): void {
   if (!tab.id) {
-    console.error("ChromaCode: Tab has no ID for content script injection");
-    return;
+   return;
   }
 
   chrome.scripting.executeScript(
@@ -97,13 +85,9 @@ function injectContentScript(tab: chrome.tabs.Tab): void {
         { action: "pickColor" },
         (response) => {
           if (chrome.runtime.lastError || !response || !response.success) {
-            console.error(
-              "ChromaCode: Content script still not responding after injection"
-            );
+            return false;
           } else {
-            console.log(
-              "ChromaCode: Color picker started after manual injection"
-            );
+            return true;
           }
         }
       );

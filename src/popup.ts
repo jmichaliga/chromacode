@@ -25,8 +25,6 @@ const isEyeDropperSupported = (): boolean => {
 
 // Initialize the popup
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('ChromaCode: Popup loaded');
-  
   // Load the last picked color and history from storage
   loadColorFromStorage();
   
@@ -50,8 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
  */
 function loadColorFromStorage(): void {
   chrome.storage.local.get(['lastPickedColor', 'colorHistory'], (result) => {
-
-    console.log('color storage>', result);
     // Set last picked color
     if (result.lastPickedColor) {
       updateColorDisplay(result.lastPickedColor);

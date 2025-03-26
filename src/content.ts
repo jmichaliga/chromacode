@@ -17,9 +17,6 @@ interface EyeDropperConstructor {
 // Simple flag to prevent multiple picker instances
 let isPickerActive = false;
 
-// Indicate that the content script is loaded and ready
-console.log('ChromaCode: Content script loaded');
-
 // Dynamically inject the stylesheet
 function injectStylesheet(): void {
   // Only inject if not already present
@@ -28,7 +25,6 @@ function injectStylesheet(): void {
     link.rel = 'stylesheet';
     link.href = chrome.runtime.getURL('styles.css');
     document.head.appendChild(link);
-    console.log('ChromaCode: Stylesheet injected');
   }
 }
 
@@ -38,14 +34,10 @@ chrome.runtime.onMessage.addListener((
   sender: chrome.runtime.MessageSender, 
   sendResponse: (response: ChromaCode.MessageResponse) => void
 ) => {
-  console.log('ChromaCode: Received message:', message);
 
   if (message.action === 'pickColor') {
-    console.log('ChromaCode: Starting color picker');
-    
     // Check if picker is already active
     if (isPickerActive) {
-      console.log('ChromaCode: Picker already active, ignoring request');
       sendResponse({ 
         success: false, 
         error: 'Color picker already active' 
@@ -76,9 +68,6 @@ chrome.runtime.onMessage.addListener((
     eyeDropper.open()
       .then(result => {
         const selectedColor = result.sRGBHex;
-        console.log('result>', result);
-        console.log('ChromaCode: Color picked with native EyeDropper:', selectedColor);
-
         chrome.runtime.sendMessage({
           action: 'colorPicked',
           color: selectedColor
@@ -89,17 +78,9 @@ chrome.runtime.onMessage.addListener((
         
         // Special handling for user cancellation (pressing Escape)
         if (error instanceof DOMException && error.name === 'AbortError') {
-          console.log('ChromaCode: User canceled color picking');
-          sendResponse({ 
-            success: false, 
-            error: 'Color picking was canceled' 
-          });
+          return false;
         } else {
-          console.error('ChromaCode: Error using native EyeDropper:', error);
-          sendResponse({ 
-            success: false, 
-            error: error instanceof Error ? error.message : String(error) 
-          });
+          return true;
         }
       });
     

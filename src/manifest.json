@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ChromaCode",
   "version": "1.0.1",
-  "description": "A color picker extension for extracting colors from web pages",
+  "description": "Lightweight extension for extracting colors from web pages, with a history of colors picked, rgb, hex, tailwind equivalent, and that's it.",
   "permissions": [
     "storage",
     "scripting"
